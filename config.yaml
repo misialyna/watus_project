@@ -1,0 +1,50 @@
+# === ASR / WHISPER ===
+model: "small"
+device: "cpu"
+compute_type: "int8"
+language: "pl"
+hotwords: ["Watuś", "Watusiu"]
+vad_min_silence_ms: 250
+
+# === I/O ===
+in_dir: "data_in"
+tmp_dir: "data_tmp"
+export_formats: ["json", "csv", "srt", "vtt"]
+batch_workers: 2
+
+# === FFMPEG (offline odszumianie + pasmo) ===
+ffmpeg_bin_env: "FFMPEG_BIN"
+ffmpeg_af: "highpass=f=80,lowpass=f=8000,afftdn=nf=-25"
+denoise: true
+
+# === DIARIZATION (Resemblyzer → clustering, 100% offline) ===
+diarize: true
+resemblyzer_weights_path: "models/resemblyzer/pretrained.pt"
+cluster_distance: 0.7
+min_seg_duration: 0.8
+
+# === LIVE / WAKE WORD ===
+wake_phrases: ["hej watuś", "hej watusiu", "hej watus"]
+live_sample_rate: 16000
+live_frame_ms: 20
+live_max_pre_roll_sec: 2.5
+live_silence_after_wake_ms: 1200
+live_min_speech_ms: 300
+live_input_device: 1
+
+# Progi energii (dBFS)
+wake_probe_min_dbfs: -45   # bramka do sondowania wywołania
+end_energy_dbfs: -45       # bramka do kończenia wypowiedzi
+
+# === „SŁOWNIK” POPRAWEK NAZW WŁASNYCH ===
+proper_name_fixes:
+  "watuś": "Watuś"
+  "watusiu": "Watusiu"
+  "Watuśiu": "Watusiu"
+
+# === PAMIĘĆ MÓWCÓW ===
+speaker_match_threshold: 0.85
+
+# === LOGI ===
+log_level: "INFO"
+logs_path: "logs.json"
