@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Modele / duże pliki
+models/
+voices/
+*.onnx
+*.pt
+*.bin
+
+# Dane runtime
+dialog.jsonl
+meldunki.jsonl
+responses.jsonl
+*.wav
+*.log
+
+# Środowisko
+.env
+*.env.local
+
+# System
+.DS_Store
+Thumbs.db

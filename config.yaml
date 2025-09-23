@@ -1,0 +1,55 @@
+# ECAPA – progi
+SPEAKER_VERIFY=1
+SPEAKER_REQUIRE_MATCH=1
+SPEAKER_THRESHOLD=0.64
+SPEAKER_STICKY_THRESHOLD=0.64
+SPEAKER_BACK_THRESHOLD=0.58
+SPEAKER_GRACE=0.08
+SPEAKER_STICKY_S=300
+SPEAKER_MIN_DBFS=-40
+SPEAKER_MAX_DBFS=-5
+SPEAKER_MIN_ENROLL_SCORE=0.55
+SPEAKER_ENROLL_MODE=first_good
+
+# --- LLM ---
+# Wariant 1 (pełny endpoint) – preferowany:
+LLM_HTTP_URL=http://127.0.0.1:8000/api1/process_question
+# Wariant 2 (baza) – używany tylko jeśli LLM_HTTP_URL jest puste:
+# LLM_API_URL=http://127.0.0.1:8000
+LLM_HTTP_TIMEOUT=30
+HTTP_RETRY_SEC=1.0
+
+# --- ZeroMQ (role i porty) ---
+# Watus:    PUB.bind → 7780 | SUB.connect ← 7781
+# Reporter: SUB.connect ← 7780 | PUB.bind  → 7781
+ZMQ_PUB_ADDR=tcp://127.0.0.1:7780     # [Watus] PUB dialog.leader (bind)
+ZMQ_SUB_ADDR=tcp://127.0.0.1:7781     # [Watus] SUB tts.speak    (connect)
+ZMQ_TTS_PUB_ADDR=tcp://127.0.0.1:7781 # [Reporter] PUB tts.speak (bind)
+# Uwaga: Reporter używa ZMQ_SUB_ADDR do connect na 7780
+
+# --- Scenariusze (opcjonalnie) ---
+WATUS_SCENARIOS_DIR=./scenarios_text
+SCENARIO_ACTIVE_PATH=./scenarios_text/active.json
+
+# Whisper
+WHISPER_MODEL=small
+WHISPER_DEVICE=cpu
+WHISPER_COMPUTE_TYPE=auto
+
+# --- TTS Piper ---
+PIPER_BIN=/Users/michalinamoszynska/PycharmProjects/watus_project/.venv/bin/piper
+PIPER_MODEL=/Users/michalinamoszynska/PycharmProjects/watus_project/models/piper/pl_PL-darkman-medium.onnx
+PIPER_CONFIG=/Users/michalinamoszynska/PycharmProjects/watus_project/models/piper/pl_PL-darkman-medium.onnx.json
+
+# --- Audio ---
+# możesz podać indeks LUB fragment nazwy (polecane na macOS)
+WATUS_INPUT_DEVICE=MacBook
+WATUS_OUTPUT_DEVICE=Speakers
+
+WATUS_SR=16000
+WATUS_BLOCKSIZE=480
+WATUS_VAD_MODE=1
+WATUS_VAD_MIN_MS=300
+WATUS_SIL_MS_END=700
+
+DIALOG_PATH=dialog.jsonl

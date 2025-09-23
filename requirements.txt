@@ -1,0 +1,21 @@
+#Core audio/STT/IO
+numpy==1.26.4
+sounddevice==0.4.6
+soundfile==0.12.1
+webrtcvad==2.0.10
+faster-whisper==1.0.3      # STT na CPU (CTranslate2)
+
+#ZMQ + HTTP + env
+pyzmq==25.1.2
+requests==2.32.3
+python-dotenv==1.0.1
+
+#Reporter API
+fastapi==0.112.2
+uvicorn==0.30.6
+
+#YAML do config.yaml
+PyYAML==6.0.1
+
+#ECAPA (rozróżnianinie głosów)
+speechbrain==0.5.16        # pociągnie torch; patrz README jeśli pip nie dobierze
