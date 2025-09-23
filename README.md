@@ -59,39 +59,46 @@ git clone https://github.com/misialyna/watus_project.git
 cd watus_project
 ````
 # venv
-``
+```bash
 python -m venv .venv
-``
+```
 ## macOS/Linux:
-`` 
-source .venv/bin/activate``
+`` `bash
+source .venv/bin/activate```
 
 ## Windows (PowerShell):
-``
+```bash
 .\.venv\Scripts\Activate.ps1
-``
+```
 ### system deps (audio) → patrz sekcja A
 ### python deps (CPU lub GPU) → patrz sekcja C/D
 
 ### .env
-``cp .env.example .env``
+```bash
+cp .env.example .env
+```
 ### uzupełnij PIPER_* i urządzenia audio (INPUT/OUTPUT)
 
 ### backend LLM (repo watus-ai)
-``uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
-``
+```bash
+uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
+```
 ## ten projekt:
-``python3 reporter.py
-``
-``
-python3 watus.py``
+```bash
+python3 reporter.py
+```
+```bash
+python3 watus.py
+```
 
 # Instalacja — krok po kroku
 ## A. Biblioteki systemowe audio
 ### macOS
-```brew install portaudio libsndfile```
-### Ubuntu/Debian/Raspberry Pi
+```bash
+brew install portaudio libsndfile
 ```
+### Ubuntu/Debian/Raspberry Pi
+```bash
 sudo apt update
 sudo apt install -y libportaudio2 libsndfile1
 ```
@@ -99,12 +106,12 @@ sudo apt install -y libportaudio2 libsndfile1
 Z reguły nie trzeba nic doinstalowywać; w razie błędów z PortAudio – doinstaluj pakiet PortAudio z binarki/menedżera paczek.
 # B. Wirtualne środowisko (venv)
 ### macOS / Linux
-```
+```bash
 python -m venv .venv
 source .venv/bin/activate
 ```
 ### Windows (PowerShell)
-```
+```bash
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
@@ -123,7 +130,7 @@ uvicorn==0.30.6<br>
 PyYAML==6.0.1<br>
 speechbrain==0.5.16<br>
 ## Instalacja (wszystkie systemy):
-```
+```bash
 pip install -U pip wheel
 pip install -r requirements.txt
 ```
@@ -132,17 +139,17 @@ Jeżeli pip nie zainstaluje Torcha — doinstaluj go wg sekcji D.
 # D. ECAPA / SpeechBrain (wymagane)
 ## 1) Windows / Linux (NVIDIA GPU)
 ### GPU (CUDA 12.1):
-```
+```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
 ### CPU only:
-```
+```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 Upewnij się, że Twoje sterowniki NVIDIA wspierają wersję CUDA z koła PyTorch.
 ## 2) macOS (Intel / Apple Silicon)
 ### MPS (akceleracja ECAPA na GPU Apple/Intel):
-```
+```bash
 pip install torch
 #(opcjonalnie) pozwól spadać na CPU, gdy MPS nie wspiera op:
 export PYTORCH_ENABLE_MPS_FALLBACK=1   # macOS z bash/zsh
@@ -150,32 +157,40 @@ export PYTORCH_ENABLE_MPS_FALLBACK=1   # macOS z bash/zsh
 Faster-Whisper na macOS zwykle działa na CPU (to OK – jest szybki).
 ## 3) Raspberry Pi (ARM)
 Spróbuj:
-```
+```bash
 pip install torch
 ```
 Jeżeli brak gotowego koła dla Twojej architektury, rozważ:<br>
 Koła społeczności dla ARM,<br>
 Lub pozostanie przy CPU (ECAPA bywa ciężka na RPi — działa, ale wolniej).
 # E. Konfiguracja .env
-```
+```bash
 cp .env.example .env
 ```
 ## Uzupełnij najważniejsze:
 ### Piper (obowiązkowo)
+```bash
     PIPER_BIN=/absolutna/ścieżka/do/venv/bin/piper      #Windows: C:\...\venv\Scripts\piper.exe
     PIPER_MODEL=/absolutna/ścieżka/do/models/pl_PL-*.onnx<br>
     PIPER_CONFIG=/absolutna/ścieżka/do/models/pl_PL-*.onnx.json
+```
 ### Whisper (CPU/GPU)
+```bash
     WHISPER_MODEL=small
     WHISPER_DEVICE=cpu         # GPU: cuda   (Windows/Linux z NVIDIA)
     WHISPER_COMPUTE_TYPE=auto  # GPU: float16, CPU: int8/int8_float16/auto
+```
 ### Audio
+```bash
     WATUS_INPUT_DEVICE=MacBook      # albo indeks urządzenia (int)
     WATUS_OUTPUT_DEVICE=Speakers
+```
 ### ZMQ / LLM (zostaw jak jest)
+```bash
     ZMQ_PUB_ADDR=tcp://127.0.0.1:7780
     ZMQ_SUB_ADDR=tcp://127.0.0.1:7781
     LLM_HTTP_URL=http://127.0.0.1:8000/api1/process_question
+```
 # F. Piper (binarka + model)
 1. Pobierz binarkę Piper dla swojego systemu (z oficjalnego repo wydania).<br>
 2. Pobierz polski model (np. `pl_PL-darkman-medium.onnx` + .`json`).<br>
@@ -183,17 +198,20 @@ cp .env.example .env
 TTS XTTS można podłączyć w przyszłości — obecnie używamy Piper (szybki, lekki na CPU).<br>
 # Uruchomienie
 ### 1. **Backend LLM** (repo `watus-ai`)<br>
-``
-uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload``<br>
+```bash
+uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
+``` 
 <br>
-### 2. **Reporter** (to repo)<br>
-``
-python reporter.py
-#health: http://127.0.0.1:8781/health
-``<br>
-<br>
+### 2. **Reporter** (to repo)
+```bash
+
+    python reporter.py
+    #health: http://127.0.0.1:8781/health
+
 ### 3. **Watus** (to repo)
-``Python watus.py``
+```bash
+Python watus.py
+```
 <br>
 * Watus loguje: **LISTENING / THINKING / SPEAKING / IDLE**.<br>
 `unknown_*` jest zapisywany w `dialog.jsonl`, ale nie wysyłany do LLM.<br>
