@@ -253,28 +253,111 @@ def _make_verifier():
 
     return _SbVerifier()
 
-# ===== Piper =====
+# ===== Piper CLI =====
+def _env_with_libs_for_piper(piper_bin: str) -> dict:
+    """
+    Uzupełnia zmienne środowiskowe tak, aby piper znalazł biblioteki
+    (macOS: DYLD_LIBRARY_PATH, Linux: LD_LIBRARY_PATH, Windows: PATH).
+    Dodatkowo dodaje folder 'piper-phonemize/lib' obok binarki piper,
+    jeśli istnieje.
+    """
+    import os, sys
+    env = os.environ.copy()
+
+    bin_dir = os.path.dirname(piper_bin) if piper_bin else ""
+    phonemize_lib = os.path.join(bin_dir, "piper-phonemize", "lib")
+
+    # List ścieżek, które dokładamy:
+    extra_paths = []
+    if os.path.isdir(bin_dir):
+        extra_paths.append(bin_dir)
+    if os.path.isdir(phonemize_lib):
+        extra_paths.append(phonemize_lib)
+
+    if not extra_paths:
+        return env  # nic do dodania
+
+    if sys.platform == "darwin":
+        # macOS
+        key = "DYLD_LIBRARY_PATH"
+        cur = env.get(key, "")
+        merged = ":".join([*extra_paths, cur]) if cur else ":".join(extra_paths)
+        env[key] = merged
+    elif sys.platform.startswith("linux"):
+        # Linux
+        key = "LD_LIBRARY_PATH"
+        cur = env.get(key, "")
+        merged = ":".join([*extra_paths, cur]) if cur else ":".join(extra_paths)
+        env[key] = merged
+    else:
+        # Windows (PATH)
+        key = "PATH"
+        cur = env.get(key, "")
+        sep = ";"  # PATH separator on Windows
+        merged = sep.join([*extra_paths, cur]) if cur else sep.join(extra_paths)
+        env[key] = merged
+
+    return env
+
+
 def piper_say(text: str, out_dev=OUT_DEV):
+    """
+    Synteza TTS przy użyciu Piper (binarka). Działa cross-platformowo
+    dzięki dynamicznemu ustawieniu ścieżek do bibliotek.
+    """
+    import os, subprocess, tempfile
+    import soundfile as sf
+    import sounddevice as sd
+
     if not PIPER_BIN or not os.path.isfile(PIPER_BIN):
-        log(f"[Watus][TTS] Brak/niepoprawny PIPER_BIN: {PIPER_BIN}"); return
+        print("[Watus][TTS] Uwaga: brak/niepoprawny PIPER_BIN:", PIPER_BIN, flush=True)
+        return
     if not PIPER_MODEL or not os.path.isfile(PIPER_MODEL):
-        log(f"[Watus][TTS] Brak/niepoprawny PIPER_MODEL: {PIPER_MODEL}"); return
+        print("[Watus][TTS] Brak/niepoprawny PIPER_MODEL:", PIPER_MODEL, flush=True)
+        return
 
     cfg = ["--config", PIPER_CONFIG] if PIPER_CONFIG and os.path.isfile(PIPER_CONFIG) else []
+
+    # Zabezpieczenie na macOS: usuń quarantine z folderu z piperem (nie szkodzi, jeśli już zdjęty)
+    try:
+        if sys.platform == "darwin":
+            bin_dir = os.path.dirname(PIPER_BIN)
+            subprocess.run(["xattr", "-dr", "com.apple.quarantine", bin_dir],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except Exception:
+        pass
+
+    # Przygotuj środowisko z poprawnym LIBRARY_PATH/PATH
+    run_env = _env_with_libs_for_piper(PIPER_BIN)
+
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         wav_path = tmp.name
+
     try:
         cmd = [PIPER_BIN, "--model", PIPER_MODEL, *cfg, "--output_file", wav_path]
-        subprocess.run(cmd, input=text.encode("utf-8"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        proc = subprocess.run(
+            cmd,
+            input=(text or "").encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            env=run_env,
+        )
+
+        # Załaduj i zagraj
         data, sr = sf.read(wav_path, dtype="float32")
         sd.play(data, sr, device=out_dev, blocking=True)
+
     except subprocess.CalledProcessError as e:
-        log(f"[Watus][TTS] Piper błąd: {e.stderr.decode('utf-8', 'ignore')}")
+        err = e.stderr.decode("utf-8", "ignore") if e.stderr else str(e)
+        print("[Watus][TTS] Piper błąd (proc):", err, flush=True)
     except Exception as e:
-        log(f"[Watus][TTS] Odtwarzanie nieudane: {e}")
+        print("[Watus][TTS] Odtwarzanie nieudane:", e, flush=True)
     finally:
-        try: os.unlink(wav_path)
-        except Exception: pass
+        try:
+            os.unlink(wav_path)
+        except Exception:
+            pass
 
 # ===== JSONL =====
 def append_dialog_line(obj: dict, path=DIALOG_PATH):
