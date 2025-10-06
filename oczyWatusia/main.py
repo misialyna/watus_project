@@ -5,7 +5,10 @@ import numpy as np
 import torch
 
 from src.img_classifiers import detect_color, detect_gender
-from src import RTDetrWrapper, IoUTracker, calc_brightness, calc_obj_angle, suggest_mode
+from src import RTDetrWrapper, Tracker, calc_brightness, calc_obj_angle, suggest_mode
+from src import nms_per_class
+from dotenv import load_dotenv
+load_dotenv()
 
 # Paleta (RGB w [0,1]); do OpenCV zamienimy na BGR w [0,255]
 COLORS = np.array([
@@ -21,9 +24,9 @@ COLORS_BGR = (COLORS[:, ::-1] * 255.0).astype(np.uint8)
 
 def detectFromCamera(
     score_thresh: float = 0.6,
-    iou_thresh: float = 0.3,
+    iou_thresh: float = 0.55,
     weights: str = "rtdetr-l.pt",
-    imgsz: int = 640,
+    imgsz: int = 1280,
     save_video: bool = False,
     out_path: str = "output.mp4",
     cam_index: int = 0,
@@ -60,7 +63,7 @@ def detectFromCamera(
 
     mode = 'light'
     detector = RTDetrWrapper(weights=weights, score_thresh=score_thresh, imgsz=imgsz)
-    tracker = IoUTracker(iou_thresh=iou_thresh, score_thresh=score_thresh, max_age=15, min_hits=3)
+    tracker = Tracker()
 
     detections = {
         "objects": [],
@@ -102,7 +105,6 @@ def detectFromCamera(
             run_detection = (frame_idx % det_stride == 0)
 
             if run_detection:
-                # Inference bez autograd; na CUDA użyjemy FP32
                 with torch.inference_mode():
                     if device.type == "cuda":
                         from torch.amp import autocast
@@ -110,12 +112,14 @@ def detectFromCamera(
                             dets = detector(frame_bgr)
                     else:
                         dets = detector(frame_bgr)
-                tracks = tracker.step(dets, (W, H))
+                    dets = nms_per_class(dets, iou_thr=0.5)
+                tracks = tracker.step(frame_bgr, dets)
             else:
+                dets = nms_per_class(dets, iou_thr=0.5)
                 try:
-                    tracks = tracker.step(dets, (W, H))
+                    tracks = tracker.step(frame_bgr, dets)
                 except AttributeError:
-                    tracks = tracker.step([], (W, H))
+                    tracks = tracker.step(frame_bgr, [])
 
             # Szybka jasność i tryb
             brightness = calc_brightness(frame_bgr)
@@ -198,4 +202,4 @@ def detectFromCamera(
 
 
 if __name__ == "__main__":
-    detectFromCamera(score_thresh=0.8, save_video=False, iou_thresh=0.4)
+    detectFromCamera(score_thresh=0.35, save_video=False, iou_thresh=0.55, imgsz=640)
