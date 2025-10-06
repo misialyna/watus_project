@@ -1,38 +1,66 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("CT2_SKIP_CONVERTERS", "1")  # <— kluczowe: pomija import transformers w ctranslate2
 
 import sys, json, time, queue, threading, subprocess, tempfile
+from pathlib import Path
 from dotenv import load_dotenv
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
 import zmq
 import webrtcvad
+
+# === ASR: Faster-Whisper (ONLY) ===
 from faster_whisper import WhisperModel
 
-load_dotenv()
+# .env z katalogu pliku (i override, gdy IDE ma własne env)
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
 
 # ===== ZMQ =====
 PUB_ADDR = os.environ.get("ZMQ_PUB_ADDR", "tcp://127.0.0.1:7780")  # Watus:PUB.bind (dialog.leader/unknown_utterance)
 SUB_ADDR = os.environ.get("ZMQ_SUB_ADDR", "tcp://127.0.0.1:7781")  # Watus:SUB.connect (tts.speak)
 
 # ===== Whisper / Piper =====
-WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL", "small")
+def _normalize_fw_model(name: str) -> str:
+    name = (name or "").strip()
+    short = {"tiny","base","small","medium","large","large-v1","large-v2","large-v3"}
+    if "/" not in name and name.lower() in short:
+        return f"guillaumekln/faster-whisper-{name.lower()}"
+    return name
+
+WHISPER_MODEL_NAME = _normalize_fw_model(os.environ.get("WHISPER_MODEL", "small"))
 WHISPER_DEVICE     = os.environ.get("WHISPER_DEVICE", "cpu")
-WHISPER_COMPUTE    = os.environ.get("WHISPER_COMPUTE_TYPE", os.environ.get("WHISPER_COMPUTE", "auto"))
+WHISPER_COMPUTE    = os.environ.get("WHISPER_COMPUTE_TYPE", os.environ.get("WHISPER_COMPUTE", "int8"))
+CPU_THREADS        = int(os.environ.get("WATUS_CPU_THREADS", str(os.cpu_count() or 4)))
+WHISPER_NUM_WORKERS= int(os.environ.get("WHISPER_NUM_WORKERS", "1"))
 
 PIPER_BIN    = os.environ.get("PIPER_BIN")
 PIPER_MODEL  = os.environ.get("PIPER_MODEL")
 PIPER_CONFIG = os.environ.get("PIPER_CONFIG")
+PIPER_SR     = os.environ.get("PIPER_SAMPLE_RATE")
 
 # ===== Audio/VAD =====
 SAMPLE_RATE  = int(os.environ.get("WATUS_SR", "16000"))
-BLOCK_SIZE   = int(os.environ.get("WATUS_BLOCKSIZE", str(int(round(SAMPLE_RATE*0.02)))))  # 20 ms default (troszkę szybciej)
+BLOCK_SIZE   = int(os.environ.get("WATUS_BLOCKSIZE", str(int(round(SAMPLE_RATE*0.02)))))  # ~20 ms
 VAD_MODE     = int(os.environ.get("WATUS_VAD_MODE", "1"))
-VAD_MIN_MS   = int(os.environ.get("WATUS_VAD_MIN_MS", "280"))    # minimalnie krócej
-SIL_MS_END   = int(os.environ.get("WATUS_SIL_MS_END", "650"))    # odcięcie ciszy trochę szybciej
+VAD_MIN_MS   = int(os.environ.get("WATUS_VAD_MIN_MS", "280"))
+SIL_MS_END   = int(os.environ.get("WATUS_SIL_MS_END", "650"))
+ASR_MIN_DBFS = float(os.environ.get("ASR_MIN_DBFS", "-34"))
+
+# endpoint anti-chop
+START_MIN_FRAMES = int(os.environ.get("WATUS_START_MIN_FRAMES", "8"))
+START_MIN_DBFS   = float(os.environ.get("WATUS_START_MIN_DBFS", str(ASR_MIN_DBFS + 4.0)))
+MIN_MS_BEFORE_ENDPOINT = int(os.environ.get("WATUS_MIN_MS_BEFORE_ENDPOINT", "500"))
+END_AT_DBFS_DROP = float(os.environ.get("END_AT_DBFS_DROP", "0"))
+EMIT_COOLDOWN_MS = int(os.environ.get("EMIT_COOLDOWN_MS", "300"))
+MAX_UTT_MS       = int(os.environ.get("MAX_UTT_MS", "6500"))
+GAP_TOL_MS       = int(os.environ.get("WATUS_GAP_TOL_MS", "450"))  # cisza, którą jeszcze tolerujemy w środku wypowiedzi
 
 IN_DEV_ENV  = os.environ.get("WATUS_INPUT_DEVICE")
 OUT_DEV_ENV = os.environ.get("WATUS_OUTPUT_DEVICE")
@@ -44,16 +72,16 @@ SPEAKER_VERIFY            = int(os.environ.get("SPEAKER_VERIFY", "1"))
 SPEAKER_ENROLL_MODE       = os.environ.get("SPEAKER_ENROLL_MODE", "first_good").strip().lower()
 SPEAKER_THRESHOLD         = float(os.environ.get("SPEAKER_THRESHOLD", "0.64"))
 SPEAKER_STICKY_THRESHOLD  = float(os.environ.get("SPEAKER_STICKY_THRESHOLD", str(SPEAKER_THRESHOLD)))
-SPEAKER_GRACE             = float(os.environ.get("SPEAKER_GRACE", "0.08"))
-SPEAKER_STICKY_SEC        = float(os.environ.get("SPEAKER_STICKY_SEC", os.environ.get("SPEAKER_STICKY_S", "300")))
+SPEAKER_GRACE             = float(os.environ.get("SPEAKER_GRACE", "0.12"))  # lekko w górę – emocje
+SPEAKER_STICKY_SEC        = float(os.environ.get("SPEAKER_STICKY_SEC", os.environ.get("SPEAKER_STICKY_S", "3600")))
 SPEAKER_MIN_ENROLL_SCORE  = float(os.environ.get("SPEAKER_MIN_ENROLL_SCORE", "0.55"))
 SPEAKER_MIN_DBFS          = float(os.environ.get("SPEAKER_MIN_DBFS", "-40"))
 SPEAKER_MAX_DBFS          = float(os.environ.get("SPEAKER_MAX_DBFS", "-5"))
-SPEAKER_BACK_THRESHOLD    = float(os.environ.get("SPEAKER_BACK_THRESHOLD", "0.58"))
+SPEAKER_BACK_THRESHOLD    = float(os.environ.get("SPEAKER_BACK_THRESHOLD", "0.56"))
 SPEAKER_REQUIRE_MATCH     = int(os.environ.get("SPEAKER_REQUIRE_MATCH", "1"))
 
 # ===== Zachowanie =====
-WAIT_REPLY_S = float(os.environ.get("WAIT_REPLY_S", "2.0"))  # ile max czekamy na TTS zanim wrócimy do słuchania
+WAIT_REPLY_S = float(os.environ.get("WAIT_REPLY_S", "0.6"))  # max czekania na TTS zanim wrócimy do słuchania
 
 def log(msg): print(msg, flush=True)
 
@@ -116,7 +144,9 @@ class Bus:
         threading.Thread(target=self._sub_loop, daemon=True).start()
 
     def publish_leader(self, payload: dict):
+        t0 = time.time()
         self.pub.send_multipart([b"dialog.leader", json.dumps(payload, ensure_ascii=False).encode("utf-8")])
+        log(f"[Perf] BUS_ms={int((time.time()-t0)*1000)}")
 
     def _sub_loop(self):
         while True:
@@ -137,6 +167,7 @@ class State:
     def __init__(self):
         self.session_id = f"live_{int(time.time())}"
         self._tts_active = False
+        self._awaiting_reply = False
         self._lock = threading.Lock()
         self.tts_pending_until = 0.0
         self.waiting_reply_until = 0.0
@@ -146,6 +177,10 @@ class State:
         with self._lock:
             self._tts_active = flag
 
+    def set_awaiting_reply(self, flag: bool):
+        with self._lock:
+            self._awaiting_reply = flag
+
     def pause_until_reply(self):
         with self._lock:
             self.waiting_reply_until = time.time() + WAIT_REPLY_S
@@ -154,6 +189,7 @@ class State:
         with self._lock:
             return (
                 self._tts_active
+                or self._awaiting_reply
                 or (time.time() < self.tts_pending_until)
                 or (time.time() < self.waiting_reply_until)
             )
@@ -176,8 +212,8 @@ class _NoopVerifier:
 def _make_verifier():
     if not SPEAKER_VERIFY: return _NoopVerifier()
     try:
-        import torch
-        from speechbrain.inference import EncoderClassifier
+        import torch  # noqa
+        from speechbrain.pretrained import EncoderClassifier  # noqa
     except Exception as e:
         log(f"[Watus][SPK] OFF (brak zależności): {e}")
         return _NoopVerifier()
@@ -200,7 +236,7 @@ def _make_verifier():
         def enrolled(self): return self._enrolled is not None
 
         def _ensure(self):
-            from speechbrain.inference import EncoderClassifier
+            from speechbrain.pretrained import EncoderClassifier
             if self._clf is None:
                 self._clf = EncoderClassifier.from_hparams(
                     source="speechbrain/spkrec-ecapa-voxceleb",
@@ -246,79 +282,42 @@ def _make_verifier():
             now = time.time()
             age = now - self._enroll_ts
             is_leader = False
-            if age <= self.sticky_sec and sim >= (self.sticky_thr - SPEAKER_GRACE): is_leader=True
-            elif sim >= SPEAKER_THRESHOLD: is_leader=True
-            elif sim >= SPEAKER_BACK_THRESHOLD and age <= self.sticky_sec: is_leader=True
+            adj_thr = (self.sticky_thr - self.grace) if dbfs > -22.0 else self.sticky_thr  # emocje → głośniej → trochę łagodniej
+            if age <= self.sticky_sec and sim >= adj_thr: is_leader=True
+            elif sim >= self.threshold: is_leader=True
+            elif sim >= self.back_thr and age <= self.sticky_sec: is_leader=True
             return {"enabled": True, "enrolled": True, "score": sim, "is_leader": bool(is_leader), "sticky_age_s": age}
 
     return _SbVerifier()
 
 # ===== Piper CLI =====
 def _env_with_libs_for_piper(piper_bin: str) -> dict:
-    """
-    Uzupełnia zmienne środowiskowe tak, aby piper znalazł biblioteki
-    (macOS: DYLD_LIBRARY_PATH, Linux: LD_LIBRARY_PATH, Windows: PATH).
-    Dodatkowo dodaje folder 'piper-phonemize/lib' obok binarki piper,
-    jeśli istnieje.
-    """
-    import os, sys
     env = os.environ.copy()
-
     bin_dir = os.path.dirname(piper_bin) if piper_bin else ""
     phonemize_lib = os.path.join(bin_dir, "piper-phonemize", "lib")
-
-    # List ścieżek, które dokładamy:
     extra_paths = []
-    if os.path.isdir(bin_dir):
-        extra_paths.append(bin_dir)
-    if os.path.isdir(phonemize_lib):
-        extra_paths.append(phonemize_lib)
-
-    if not extra_paths:
-        return env  # nic do dodania
+    if os.path.isdir(bin_dir): extra_paths.append(bin_dir)
+    if os.path.isdir(phonemize_lib): extra_paths.append(phonemize_lib)
+    if not extra_paths: return env
 
     if sys.platform == "darwin":
-        # macOS
         key = "DYLD_LIBRARY_PATH"
-        cur = env.get(key, "")
-        merged = ":".join([*extra_paths, cur]) if cur else ":".join(extra_paths)
-        env[key] = merged
     elif sys.platform.startswith("linux"):
-        # Linux
         key = "LD_LIBRARY_PATH"
-        cur = env.get(key, "")
-        merged = ":".join([*extra_paths, cur]) if cur else ":".join(extra_paths)
-        env[key] = merged
     else:
-        # Windows (PATH)
         key = "PATH"
-        cur = env.get(key, "")
-        sep = ";"  # PATH separator on Windows
-        merged = sep.join([*extra_paths, cur]) if cur else sep.join(extra_paths)
-        env[key] = merged
-
+    cur = env.get(key, "")
+    sep = (":" if key != "PATH" else ";")
+    env[key] = (sep.join([*extra_paths, cur]) if cur else sep.join(extra_paths))
     return env
 
-
 def piper_say(text: str, out_dev=OUT_DEV):
-    """
-    Synteza TTS przy użyciu Piper (binarka). Działa cross-platformowo
-    dzięki dynamicznemu ustawieniu ścieżek do bibliotek.
-    """
-    import os, subprocess, tempfile
-    import soundfile as sf
-    import sounddevice as sd
-
+    if not text or not text.strip(): return
     if not PIPER_BIN or not os.path.isfile(PIPER_BIN):
-        print("[Watus][TTS] Uwaga: brak/niepoprawny PIPER_BIN:", PIPER_BIN, flush=True)
-        return
+        log(f"[Watus][TTS] Uwaga: brak/niepoprawny PIPER_BIN: {PIPER_BIN}"); return
     if not PIPER_MODEL or not os.path.isfile(PIPER_MODEL):
-        print("[Watus][TTS] Brak/niepoprawny PIPER_MODEL:", PIPER_MODEL, flush=True)
-        return
+        log(f"[Watus][TTS] Brak/niepoprawny PIPER_MODEL: {PIPER_MODEL}"); return
 
-    cfg = ["--config", PIPER_CONFIG] if PIPER_CONFIG and os.path.isfile(PIPER_CONFIG) else []
-
-    # Zabezpieczenie na macOS: usuń quarantine z folderu z piperem (nie szkodzi, jeśli już zdjęty)
     try:
         if sys.platform == "darwin":
             bin_dir = os.path.dirname(PIPER_BIN)
@@ -327,37 +326,28 @@ def piper_say(text: str, out_dev=OUT_DEV):
     except Exception:
         pass
 
-    # Przygotuj środowisko z poprawnym LIBRARY_PATH/PATH
-    run_env = _env_with_libs_for_piper(PIPER_BIN)
+    cfg = ["--config", PIPER_CONFIG] if PIPER_CONFIG and os.path.isfile(PIPER_CONFIG) else []
+    env = _env_with_libs_for_piper(PIPER_BIN)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         wav_path = tmp.name
-
+    t0 = time.time()
     try:
         cmd = [PIPER_BIN, "--model", PIPER_MODEL, *cfg, "--output_file", wav_path]
-        proc = subprocess.run(
-            cmd,
-            input=(text or "").encode("utf-8"),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-            env=run_env,
-        )
-
-        # Załaduj i zagraj
+        if PIPER_SR: cmd += ["--sample_rate", str(PIPER_SR)]
+        subprocess.run(cmd, input=(text or "").encode("utf-8"),
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, env=env)
         data, sr = sf.read(wav_path, dtype="float32")
         sd.play(data, sr, device=out_dev, blocking=True)
-
     except subprocess.CalledProcessError as e:
         err = e.stderr.decode("utf-8", "ignore") if e.stderr else str(e)
-        print("[Watus][TTS] Piper błąd (proc):", err, flush=True)
+        log(f"[Watus][TTS] Piper błąd (proc): {err}")
     except Exception as e:
-        print("[Watus][TTS] Odtwarzanie nieudane:", e, flush=True)
+        log(f"[Watus][TTS] Odtwarzanie nieudane: {e}")
     finally:
-        try:
-            os.unlink(wav_path)
-        except Exception:
-            pass
+        try: os.unlink(wav_path)
+        except Exception: pass
+        log(f"[Perf] TTS_play_ms={int((time.time()-t0)*1000)}")
 
 # ===== JSONL =====
 def append_dialog_line(obj: dict, path=DIALOG_PATH):
@@ -371,11 +361,21 @@ class STTEngine:
         self.bus = bus
         self.vad = webrtcvad.Vad(VAD_MODE)
         log(f"[Watus] STT ready (device={IN_DEV} sr={SAMPLE_RATE} block={BLOCK_SIZE})")
-        # Szybka konfiguracja Whisper – beam_size=1 (najszybciej), bez temperature sampling
-        self.model = WhisperModel(WHISPER_MODEL_NAME, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE)
+
+        # Faster-Whisper ONLY
+        log(f"[Watus] FasterWhisper init: model={WHISPER_MODEL_NAME} device={WHISPER_DEVICE} "
+            f"compute={WHISPER_COMPUTE} cpu_threads={CPU_THREADS} workers={WHISPER_NUM_WORKERS}")
+        t0 = time.time()
+        self.model = WhisperModel(
+            WHISPER_MODEL_NAME,
+            device=WHISPER_DEVICE,
+            compute_type=WHISPER_COMPUTE,
+            cpu_threads=CPU_THREADS,
+            num_workers=WHISPER_NUM_WORKERS
+        )
+        log(f"[Watus] STT FasterWhisper loaded ({int((time.time()-t0)*1000)} ms)")
         self.verifier = _make_verifier()
-        self.last_turn_id = None
-        self.emit_cooldown_ms = 350   # krócej
+        self.emit_cooldown_ms = EMIT_COOLDOWN_MS
         self.cooldown_until = 0
 
     @staticmethod
@@ -388,8 +388,13 @@ class STTEngine:
         except Exception: return False
 
     def _transcribe_float32(self, pcm_f32: np.ndarray) -> str:
-        segments, _ = self.model.transcribe(pcm_f32, language="pl", beam_size=1, vad_filter=False)
-        return "".join(seg.text for seg in segments)
+        t0 = time.time()
+        segments, _ = self.model.transcribe(
+            pcm_f32, language="pl", beam_size=1, vad_filter=False
+        )
+        txt = "".join(seg.text for seg in segments)
+        log(f"[Perf] ASR_ms={int((time.time()-t0)*1000)} len={len(txt)}")
+        return txt
 
     def run(self):
         in_stream = sd.InputStream(
@@ -397,11 +402,24 @@ class STTEngine:
             blocksize=BLOCK_SIZE, device=IN_DEV
         )
 
+        frame_ms = int(1000 * BLOCK_SIZE / SAMPLE_RATE)
+        sil_frames_end     = max(1, SIL_MS_END // frame_ms)
+        min_speech_frames  = max(1, VAD_MIN_MS  // frame_ms)
+
         speech_frames = bytearray()
         in_speech = False
         started_ms = None
         last_voice_ms = 0
         listening_flag = None
+
+        # start detection
+        start_voice_run = 0
+
+        # for anti-drop
+        last_dbfs = None
+        speech_frames_count = 0
+        silence_run = 0
+        gap_run = 0
 
         with in_stream:
             while True:
@@ -411,6 +429,8 @@ class STTEngine:
                     if listening_flag is not False:
                         cue_idle(); listening_flag = False
                     in_speech = False; speech_frames = bytearray(); started_ms = None
+                    start_voice_run = 0; last_dbfs = None
+                    speech_frames_count = 0; silence_run = 0; gap_run = 0
                     time.sleep(0.01); continue
 
                 if now_ms < self.cooldown_until:
@@ -428,80 +448,141 @@ class STTEngine:
                 frame_bytes = audio.tobytes()
                 is_sp = self._vad_is_speech(frame_bytes)
 
-                if is_sp and not in_speech:
-                    in_speech = True
-                    speech_frames = bytearray()
-                    started_ms = now_ms
-                    last_voice_ms = now_ms
+                # --- twardy start: kilka ramek powyżej progu dBFS ---
+                if not in_speech:
+                    if is_sp:
+                        cur = np.frombuffer(frame_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+                        cur_db = float(self._rms_dbfs(cur))
+                        if cur_db > START_MIN_DBFS:
+                            start_voice_run += 1
+                        else:
+                            start_voice_run = 0
+                        if start_voice_run >= START_MIN_FRAMES:
+                            in_speech = True
+                            speech_frames = bytearray()
+                            started_ms = now_ms
+                            last_voice_ms = now_ms
+                            speech_frames_count = 0
+                            silence_run = 0
+                            gap_run = 0
+                            last_dbfs = None
+                            start_voice_run = 0
+                    else:
+                        start_voice_run = 0
+                    time.sleep(0.0005)
+                    continue
 
-                if in_speech and is_sp:
+                # --- w turze mowy ---
+                if is_sp:
                     speech_frames.extend(frame_bytes)
                     last_voice_ms = now_ms
+                    silence_run = 0
+                    gap_run = 0
+                    speech_frames_count += 1
 
-                if in_speech and not is_sp:
-                    if now_ms - last_voice_ms >= SIL_MS_END:
-                        dur_ms = last_voice_ms - (started_ms or last_voice_ms)
-                        in_speech = False
+                    cur = np.frombuffer(frame_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+                    cur_db = float(self._rms_dbfs(cur))
+                    if last_dbfs is None: last_dbfs = cur_db
 
-                        if dur_ms >= VAD_MIN_MS and len(speech_frames) > 0:
-                            cue_think()
-                            pcm_f32 = np.frombuffer(speech_frames, dtype=np.int16).astype(np.float32)/32768.0
-                            dbfs = float(self._rms_dbfs(pcm_f32))
-
-                            # enroll (first_good)
-                            if (self.verifier.enabled and
-                                self.verifier.__class__ != _NoopVerifier and
-                                getattr(self.verifier, "enrolled", False) is False and
-                                SPEAKER_ENROLL_MODE == "first_good"):
-                                try: self.verifier.enroll_samples(pcm_f32, SAMPLE_RATE)
-                                except Exception: pass
-
-                            verify = self.verifier.verify(pcm_f32, SAMPLE_RATE, dbfs) if self.verifier else {"enabled": False}
-                            is_leader = bool(verify.get("is_leader", False))
-
-                            # transkrypcja
-                            text = self._transcribe_float32(pcm_f32).strip()
-                            if text:
-                                ts_start = (started_ms or now_ms)/1000.0
-                                ts_end   = last_voice_ms/1000.0
-                                turn_id  = int(last_voice_ms)
-
-                                line = {
-                                    "type":"leader_utterance" if is_leader else "unknown_utterance",
-                                    "session_id": self.state.session_id,
-                                    "group_id": f"{'leader' if is_leader else 'unknown'}_{turn_id}",
-                                    "speaker_id": "leader" if is_leader else "unknown",
-                                    "is_leader": is_leader,
-                                    "turn_ids":[turn_id],
-                                    "text_full": text,
-                                    "category":"wypowiedź",
-                                    "reply_hint": is_leader,
-                                    "ts_start": ts_start,
-                                    "ts_end": ts_end,
-                                    "dbfs": dbfs,
-                                    "verify": verify,
-                                    "emit_reason":"endpoint",
-                                    "ts": time.time()
-                                }
-                                append_dialog_line(line, DIALOG_PATH)
-
-                                if is_leader:
-                                    log(f"[Watus][PUB] dialog.leader → group={line['group_id']}")
-                                    self.bus.publish_leader(line)
-                                    # chwilowo wstrzymaj nasłuch – czekamy na TTS
-                                    self.state.pause_until_reply()
-                                    self.state.tts_pending_until = time.time() + 0.8
-                                else:
-                                    log(f"[Watus][SKIP] unknown zapisany, nie wysyłam ZMQ")
-
+                    if END_AT_DBFS_DROP > 0:
+                        if speech_frames_count >= min_speech_frames and (now_ms - (started_ms or now_ms)) >= MIN_MS_BEFORE_ENDPOINT:
+                            if (last_dbfs - cur_db) >= END_AT_DBFS_DROP:
+                                in_speech = False
+                                dur_ms = last_voice_ms - (started_ms or last_voice_ms)
+                                self._finalize(speech_frames, started_ms, last_voice_ms, dur_ms)
+                                listening_flag = None
+                                speech_frames = bytearray(); started_ms = None
+                                speech_frames_count = 0; silence_run = 0; last_dbfs = None; gap_run = 0
                                 self.cooldown_until = now_ms + self.emit_cooldown_ms
+                                continue
+                    else:
+                        last_dbfs = cur_db
 
-                            listening_flag = None
-                            speech_frames = bytearray()
-                            started_ms = None
-                            last_voice_ms = now_ms
+                else:
+                    # brak VAD -> liczymy ciszę i tolerowany GAP
+                    silence_run += 1
+                    gap_run += frame_ms
+                    # toleruj krótką przerwę w środku wypowiedzi
+                    if gap_run < GAP_TOL_MS:
+                        continue
 
-                time.sleep(0.001)
+                    if silence_run >= sil_frames_end and (now_ms - (started_ms or now_ms)) >= MIN_MS_BEFORE_ENDPOINT:
+                        in_speech = False
+                        dur_ms = last_voice_ms - (started_ms or last_voice_ms)
+                        if dur_ms >= VAD_MIN_MS and len(speech_frames) > 0:
+                            self._finalize(speech_frames, started_ms, last_voice_ms, dur_ms)
+                            self.cooldown_until = now_ms + self.emit_cooldown_ms
+                        listening_flag = None
+                        speech_frames = bytearray(); started_ms = None
+                        speech_frames_count = 0; silence_run = 0; last_dbfs = None; gap_run = 0
+
+                # twardy limit
+                if in_speech and started_ms and (now_ms - started_ms) >= MAX_UTT_MS:
+                    in_speech = False
+                    dur_ms = last_voice_ms - (started_ms or last_voice_ms)
+                    if dur_ms >= VAD_MIN_MS and len(speech_frames) > 0:
+                        self._finalize(speech_frames, started_ms, last_voice_ms, dur_ms)
+                        self.cooldown_until = now_ms + self.emit_cooldown_ms
+                    listening_flag = None
+                    speech_frames = bytearray(); started_ms = None
+                    speech_frames_count = 0; silence_run = 0; last_dbfs = None; gap_run = 0
+
+                time.sleep(0.0005)
+
+    def _finalize(self, speech_frames: bytearray, started_ms: int, last_voice_ms: int, dur_ms: int):
+        cue_think()
+        pcm_f32 = np.frombuffer(speech_frames, dtype=np.int16).astype(np.float32)/32768.0
+        dbfs = float(self._rms_dbfs(pcm_f32))
+        if dbfs < ASR_MIN_DBFS:
+            return
+
+        # enroll (first_good)
+        if (getattr(self.verifier, "enabled", False)
+            and getattr(self.verifier, "enrolled", False) is False
+            and SPEAKER_ENROLL_MODE == "first_good"):
+            try: self.verifier.enroll_samples(pcm_f32, SAMPLE_RATE)
+            except Exception: pass
+
+        verify = self.verifier.verify(pcm_f32, SAMPLE_RATE, dbfs) if self.verifier else {"enabled": False}
+        is_leader = bool(verify.get("is_leader", False)) or (not SPEAKER_REQUIRE_MATCH)
+
+        # transkrypcja
+        text = self._transcribe_float32(pcm_f32).strip()
+        if not text:
+            return
+
+        ts_start = (started_ms or last_voice_ms)/1000.0
+        ts_end   = last_voice_ms/1000.0
+        turn_id  = int(last_voice_ms)
+
+        line = {
+            "type":"leader_utterance" if is_leader else "unknown_utterance",
+            "session_id": self.state.session_id,
+            "group_id": f"{'leader' if is_leader else 'unknown'}_{turn_id}",
+            "speaker_id": "leader" if is_leader else "unknown",
+            "is_leader": is_leader,
+            "turn_ids":[turn_id],
+            "text_full": text,
+            "category":"wypowiedź",
+            "reply_hint": is_leader,
+            "ts_start": ts_start,
+            "ts_end": ts_end,
+            "dbfs": dbfs,
+            "verify": verify,
+            "emit_reason":"endpoint",
+            "ts": time.time()
+        }
+        append_dialog_line(line, DIALOG_PATH)
+
+        if is_leader:
+            log(f"[Watus][PUB] dialog.leader → group={line['group_id']} spk_score={verify.get('score')}")
+            # od teraz NIE nasłuchujemy aż do startu TTS
+            self.state.set_awaiting_reply(True)
+            self.bus.publish_leader(line)
+            self.state.pause_until_reply()
+            self.state.tts_pending_until = time.time() + 0.6
+        else:
+            log(f"[Watus][SKIP] unknown zapisany, nie wysyłam ZMQ")
 
 # ===== TTS worker =====
 def tts_worker(state: State, bus: Bus):
@@ -516,10 +597,11 @@ def tts_worker(state: State, bus: Bus):
             continue
         state.last_tts_id = reply_to
 
-        # pokaż odpowiedź LLM w terminalu Watusa (krótka info – bez pełnego cytatu w logach STT)
         if text:
             log(f"[Watus][LLM] answer len={len(text)} (reply_to={reply_to})")
 
+        # OD TERAZ prawdziwy TTS – blokujemy słuchanie
+        state.set_awaiting_reply(False)
         state.set_tts(True); cue_speak()
         try:
             piper_say(text, out_dev=OUT_DEV)
@@ -528,6 +610,8 @@ def tts_worker(state: State, bus: Bus):
 
 # ===== Main =====
 if __name__ == "__main__":
+    log(f"[Env] ASR=Faster WHISPER_MODEL={WHISPER_MODEL_NAME} WHISPER_DEVICE={WHISPER_DEVICE} "
+        f"WHISPER_COMPUTE={WHISPER_COMPUTE} WATUS_BLOCKSIZE={BLOCK_SIZE}")
     log(f"[Watus] PUB dialog.leader @ {PUB_ADDR} | SUB tts.speak @ {SUB_ADDR}")
     list_devices()
     bus = Bus(PUB_ADDR, SUB_ADDR)

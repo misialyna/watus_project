@@ -1,34 +1,31 @@
-# Python
+# --- venv & IDE
+.venv/
+.env
+.vscode/
+.idea/
+
+# --- Python cache
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
-.venv/
-env/
-venv/
 
-# IDE
-.idea/
-.vscode/
-
-# Modele / duże pliki
-models/
-voices/
-*.onnx
-*.pt
-*.bin
-
-# Dane runtime
+# --- Logi i dane runtime
 dialog.jsonl
 meldunki.jsonl
-responses.jsonl
+camera.jsonl
 *.wav
-*.log
 
-# Środowisko
-.env
-*.env.local
+# --- Modele / ciężkie wagi (trzymaj lokalnie lub w Git LFS)
+*.pt
+*.onnx
+*.onnx.json
+models/piper/*
+!models/piper/.gitkeep
 
-# System
+# --- Cache kamery (tworzy się automatycznie)
+oczyWatusia_extracted/
+
+# --- Inne tymczasowe
 .DS_Store
 Thumbs.db

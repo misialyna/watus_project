@@ -1,0 +1,17 @@
+numpy~=2.3.1
+torch~=2.6.0+cu124
+typing~=3.10.0.0
+ultralytics~=8.3.203
+wandb~=0.22.0
+transformers~=4.56.2
+huggingface_hub~=0.35.1
+supervision~=0.25.1
+albumentations~=2.0.8
+pillow~=11.1.0
+torchvision~=0.21.0+cu124
+torchaudio~=2.6.*+cu124
+dotenv
+matplotlib
+opencv-python
+pycocotools
+accelerate
