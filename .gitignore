@@ -29,3 +29,5 @@ oczyWatusia_extracted/
 # --- Inne tymczasowe
 .DS_Store
 Thumbs.db
+datasets/
+OczyWatusia/

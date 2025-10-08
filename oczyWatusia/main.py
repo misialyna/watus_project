@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from src.img_classifiers import detect_color, detect_gender
-from src import RTDetrWrapper, Tracker, calc_brightness, calc_obj_angle, suggest_mode
+from src import CVWrapper, Tracker, calc_brightness, calc_obj_angle, suggest_mode
 from src import nms_per_class
 from dotenv import load_dotenv
 load_dotenv()
@@ -25,7 +25,7 @@ COLORS_BGR = (COLORS[:, ::-1] * 255.0).astype(np.uint8)
 def detectFromCamera(
     score_thresh: float = 0.6,
     iou_thresh: float = 0.55,
-    weights: str = "rtdetr-l.pt",
+    weights: str = "yolo12s.pt",
     imgsz: int = 1280,
     save_video: bool = False,
     out_path: str = "output.mp4",
@@ -62,7 +62,7 @@ def detectFromCamera(
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
     mode = 'light'
-    detector = RTDetrWrapper(weights=weights, score_thresh=score_thresh, imgsz=imgsz)
+    detector = CVWrapper(weights=weights, score_thresh=score_thresh, imgsz=imgsz)
     tracker = Tracker()
 
     detections = {

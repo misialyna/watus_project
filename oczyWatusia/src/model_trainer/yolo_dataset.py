@@ -1,8 +1,8 @@
 import numpy as np
-from ultralytics.data import YOLODataset
+from ultralytics.data import dataset
 
 
-class YOLOWeightedDataset(YOLODataset):
+class YOLOWeightedDataset(dataset.YOLODataset):
     def __init__(self, *args, mode="train", **kwargs):
         """
         Initialize the WeightedDataset.

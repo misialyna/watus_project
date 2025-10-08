@@ -5,7 +5,7 @@ import torch
 from ultralytics import YOLO
 
 
-class RTDetrWrapper:
+class CVWrapper:
     def __init__(
         self,
         weights: str = "rtdetr-l.pt",

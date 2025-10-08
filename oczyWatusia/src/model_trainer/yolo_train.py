@@ -8,10 +8,14 @@ import torch
 import wandb
 import yaml
 from matplotlib import pyplot as plt
-from ultralytics.models import YOLO
 from dotenv import load_dotenv
+import ultralytics.data.build as dataset
+from yolo_dataset import YOLOWeightedDataset
 
 load_dotenv()
+
+dataset.YOLODataset = YOLOWeightedDataset
+from ultralytics.models import YOLO
 
 ds_dir = "./datasets/clothesYOLO"
 data_yaml_path = ds_dir + "/data.yaml"
@@ -20,8 +24,6 @@ base_dir = "./finetuning"
 model_save_dir = base_dir + "/ft-yolo-models"
 base_model_name = "yolo12s"
 projectName = "OczyWatusia"
-
-
 
 def create_validation_set(train_images_dir, train_labels_dir, val_images_dir, val_labels_dir):
     os.makedirs(val_images_dir, exist_ok=True)
@@ -50,7 +52,7 @@ def create_validation_set(train_images_dir, train_labels_dir, val_images_dir, va
             shutil.copy2(src_label, dst_label)
 
 
-def train_yolo_model(epochs=15, batch_size=1, img_size=640, lr0=0.01):
+def train_yolo_model(epochs=1, batch_size=2, img_size=640, lr0=0.01):
     # Check for CUDA availability
     device = '0' if torch.cuda.is_available() else 'cpu'
 
@@ -68,6 +70,7 @@ def train_yolo_model(epochs=15, batch_size=1, img_size=640, lr0=0.01):
 
     WANDB_API_KEY=os.environ.get('WANDB_API_KEY')
     wandb.login(key=WANDB_API_KEY)
+    wandb.init(project=projectName, name=run_name, job_type='train')
     # Train the model
     results = model.train(
         data=data_yaml_path,
@@ -87,12 +90,15 @@ def train_yolo_model(epochs=15, batch_size=1, img_size=640, lr0=0.01):
         save_period=5,
         freeze=[],
         classes=[0, 2, 3, 5, 7, 9, 10],
+        workers=8,
+        cache=True,
         # augment=True,
         # translate=0.1,
         # scale=0.1,
         # hsv_h=0.015,
         # hsv_s=0.7,
         # hsv_v=0.4,
+        # fraction=0.1,
     )
 
     # Save the model
@@ -107,7 +113,8 @@ def train_yolo_model(epochs=15, batch_size=1, img_size=640, lr0=0.01):
             best_model_path = os.path.join(base_dir, 'runs', run_name, 'weights', 'best.pt')
             if os.path.exists(best_model_path):
                 shutil.copy2(best_model_path, model_save_path)
-
+    finally:
+        wandb.finish()
     return model
 
 
