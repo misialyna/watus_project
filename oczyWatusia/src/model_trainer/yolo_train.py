@@ -5,16 +5,22 @@ import shutil
 import cv2
 import numpy as np
 import torch
+import wandb
 import yaml
 from matplotlib import pyplot as plt
 from ultralytics.models import YOLO
+from dotenv import load_dotenv
 
-ds_dir = "../../datasets/clothesYOLO"
+load_dotenv()
+
+ds_dir = "./datasets/clothesYOLO"
 data_yaml_path = ds_dir + "/data.yaml"
 test_path=data_yaml_path + "/test"
-base_dir = "/"
-model_save_dir = "/ft-yolo-models"
-base_model_name = "yolov12s"
+base_dir = "./finetuning"
+model_save_dir = base_dir + "/ft-yolo-models"
+base_model_name = "yolo12s"
+projectName = "OczyWatusia"
+
 
 
 def create_validation_set(train_images_dir, train_labels_dir, val_images_dir, val_labels_dir):
@@ -44,7 +50,7 @@ def create_validation_set(train_images_dir, train_labels_dir, val_images_dir, va
             shutil.copy2(src_label, dst_label)
 
 
-def train_yolo_model(epochs=50, batch_size=4, img_size=1280, lr0=0.01):
+def train_yolo_model(epochs=15, batch_size=1, img_size=640, lr0=0.01):
     # Check for CUDA availability
     device = '0' if torch.cuda.is_available() else 'cpu'
 
@@ -60,23 +66,27 @@ def train_yolo_model(epochs=50, batch_size=4, img_size=1280, lr0=0.01):
         model = YOLO('yolov8n.pt')
         model_type = 'yolov8n'
 
-    print(model.named_parameters())
-
+    WANDB_API_KEY=os.environ.get('WANDB_API_KEY')
+    wandb.login(key=WANDB_API_KEY)
     # Train the model
     results = model.train(
         data=data_yaml_path,
         epochs=epochs,
         batch=batch_size,
         imgsz=img_size,
+        weight_decay=0.001,
+        dropout=0.001,
         patience=10,
         save=True,
         device=device,
-        project=os.path.join(base_dir, 'runs'),
+        project=projectName,
         name=run_name,
         lr0=lr0,
         lrf=0.01,
         plots=True,
         save_period=5,
+        freeze=[],
+        classes=[0, 2, 3, 5, 7, 9, 10],
         # augment=True,
         # translate=0.1,
         # scale=0.1,
@@ -105,13 +115,14 @@ def validate_model(model):
     metrics = model.val(
         data=data_yaml_path,
         split='val',
-        project=os.path.join(base_dir, 'runs'),
+        project=projectName,
         name='val'
     )
 
     # Calculate F1 score
     f1_score = 2 * metrics.box.precision * metrics.box.recall / (
                 metrics.box.precision + metrics.box.recall + 1e-6)
+    print(f"F1 score: {f1_score}")
 
     return metrics
 
@@ -170,12 +181,42 @@ def test_on_images(model, conf_threshold=0.25):
         plt.savefig(output_path)
         plt.close()
 
+train_path = ds_dir + '/train'
+val_path = ds_dir + '/val'
+class_names = ['T-shirt', 'aifh', 'boy', 'cros', 'dress', 'girl', 'objects', 'shorts', 'skirt', 'sweater', 'trousers']
+
+def verify_dataset_structure():
+    # Check if data.yaml exists and create if needed
+    if not os.path.exists(data_yaml_path):
+        train_images_path = os.path.join(train_path, "images")
+        val_images_path = os.path.join(val_path, "images")
+        test_images_path = os.path.join(test_path, "images")
+
+        yaml_data = {
+            'train': train_images_path,
+            'val': val_images_path,
+            'test': test_images_path,
+            'nc': len(class_names),
+            'names': class_names
+        }
+
+        with open(data_yaml_path, 'w') as f:
+            yaml.dump(yaml_data, f, default_flow_style=False)
+
+    # Count and verify images and labels
+    train_images_dir = os.path.join(train_path, "images")
+    train_labels_dir = os.path.join(train_path, "labels")
+
+    train_images = len([f for f in os.listdir(train_images_dir)
+                        if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp'))])
+    train_labels = len([f for f in os.listdir(train_labels_dir) if f.endswith('.txt')])
+
+    return train_images > 0 and train_labels > 0
 
 def main():
-    # Define timestamp for this training run
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if not verify_dataset_structure():
+        return
 
-    # Train model
     model = train_yolo_model()
 
     if model is not None:

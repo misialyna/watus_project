@@ -1,12 +1,15 @@
 import os
 from pathlib import Path
+
+import numpy as np
 import torch
 import supervision as sv
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
+from ultralytics.data import YOLODataset
 
 DS_PATH = Path(os.environ.get("DS_PATH"))
-DS_NAME = "clothes"
+DS_NAME = "clothesYOLO"
 DS_PATH = DS_PATH / DS_NAME
 
 class CocoDetAsTargets(Dataset):
@@ -104,18 +107,3 @@ def annotate(image, annotations, classes):
     annotated_image = label_annotator.annotate(annotated_image, annotations, labels=labels)
     return annotated_image
 
-#
-# annotated_images = []
-# for i in range(GRID_SIZE * GRID_SIZE):
-#     _, image, annotations = ds_train[i]
-#     annotated_image = annotate(image, annotations, ds_train.classes)
-#     annotated_images.append(annotated_image)
-#
-# grid = sv.create_tiles(
-#     annotated_images,
-#     grid_size=(GRID_SIZE, GRID_SIZE),
-#     single_tile_size=(400, 400),
-#     tile_padding_color=sv.Color.WHITE,
-#     tile_margin_color=sv.Color.WHITE
-# )
-# sv.plot_image(grid, size=(10, 10))
