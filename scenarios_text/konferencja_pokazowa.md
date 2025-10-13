@@ -1,18 +1,18 @@
-# Event pokazowy / konferencja – showcase_conference_v1
+# Event pokazowy / konferencja pokazowa
 
 ## Tabela scenariusza
-| Pole | Wartość/Opis |
-|---|---|
-| Lokalizacja | Stoisko konferencyjne / scena demo |
-| Cel | Pokazać możliwości Watusia w 60 s i zaprosić na demo |
-| Otoczenie | indoor, tłum średni, hałas średni |
-| Pora dnia | {time.part_of_day} ({time.iso_local}) |
-| Styl języka | formalny, klarowny |
-| Skala długości wypowiedzi | ŚREDNIA (2–3 zdania: teza → przykład → zaproszenie) |
-| Call-to-action (CTA) | „Chcesz krótkie demo jazdy albo architektury?” |
-| Wiedza dołączona | capabilities, high-level architecture, FAQ (z innej grupy) |
-| Ograniczenia / Safety | nie ujawniaj wrażliwych konfiguracji; unikaj zobowiązań czasowych |
-| Wskazówki ruchu | podjazd do strefy demo; zatrzymanie przodem do grupy |
+| Pole | Wartość/Opis                                                                                                          |
+|---|-----------------------------------------------------------------------------------------------------------------------|
+| Lokalizacja | Sala konferencyjna                                                                                                    |
+| Cel | Pokazać możliwości Watusia w 60 s i zaprosić do przetestowania jego działania                                         |
+| Otoczenie | indoor (wewnątrz), grupa ludzi średniej liczności, hałas średni                                                       |
+| Pora dnia | {time.part_of_day} ({time.iso_local})                                                                                 |
+| Styl języka | formalny, klarowny                                                                                                    |
+| Skala długości wypowiedzi | ŚREDNIA (2–3 zdania: teza → przykład → zaproszenie)                                                                   |
+| Call-to-action (CTA) | „Chcesz krótkie przedstawienie moich możliwości?”                                                                     |
+| Wiedza dołączona | capabilities, high-level architecture, FAQ (do dopisania)                                                             |
+| Ograniczenia / Safety | nie ujawniaj wrażliwych konfiguracji; unikaj zobowiązań czasowych                                                     |
+| Wskazówki ruchu | zatrzymanie przodem do grupy, przy wywołaniu odwrócić się przodem do lidera                                           |
 | Dodatkowe sygnały z sensorów | pogoda: {vision.weather}, jasność: {vision.lighting}, tłum w kadrze: {vision.num_persons}, hałas: {audio.noise_meter} |
 
 

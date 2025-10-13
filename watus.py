@@ -7,8 +7,9 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("CT2_SKIP_CONVERTERS", "1")  # <— kluczowe: pomija import transformers w ctranslate2
 
-import sys, json, time, queue, threading, subprocess, tempfile
+import sys, json, time, queue, threading, subprocess, tempfile, atexit, re
 from pathlib import Path
+from collections import deque
 from dotenv import load_dotenv
 import numpy as np
 import sounddevice as sd
@@ -18,6 +19,9 @@ import webrtcvad
 
 # === ASR: Faster-Whisper (ONLY) ===
 from faster_whisper import WhisperModel
+
+# === Kontroler diody LED ===
+from led_controller import LEDController
 
 # .env z katalogu pliku (i override, gdy IDE ma własne env)
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=True)
@@ -49,12 +53,13 @@ PIPER_SR     = os.environ.get("PIPER_SAMPLE_RATE")
 SAMPLE_RATE  = int(os.environ.get("WATUS_SR", "16000"))
 BLOCK_SIZE   = int(os.environ.get("WATUS_BLOCKSIZE", str(int(round(SAMPLE_RATE*0.02)))))  # ~20 ms
 VAD_MODE     = int(os.environ.get("WATUS_VAD_MODE", "1"))
-VAD_MIN_MS   = int(os.environ.get("WATUS_VAD_MIN_MS", "280"))
-SIL_MS_END   = int(os.environ.get("WATUS_SIL_MS_END", "650"))
+VAD_MIN_MS   = int(os.environ.get("WATUS_VAD_MIN_MS", "150")) # ZMNIEJSZONO z 280ms dla krótkich słów
+SIL_MS_END   = int(os.environ.get("WATUS_SIL_MS_END", "450")) # ZMNIEJSZONO z 650ms dla szybszej reakcji
 ASR_MIN_DBFS = float(os.environ.get("ASR_MIN_DBFS", "-34"))
 
 # endpoint anti-chop
-START_MIN_FRAMES = int(os.environ.get("WATUS_START_MIN_FRAMES", "8"))
+PREBUFFER_FRAMES = int(os.environ.get("WATUS_PREBUFFER_FRAMES", "15")) # 15 ramek * 20ms = 300ms
+START_MIN_FRAMES = int(os.environ.get("WATUS_START_MIN_FRAMES", "4")) # 4 ramki * 20ms = 80ms
 START_MIN_DBFS   = float(os.environ.get("WATUS_START_MIN_DBFS", str(ASR_MIN_DBFS + 4.0)))
 MIN_MS_BEFORE_ENDPOINT = int(os.environ.get("WATUS_MIN_MS_BEFORE_ENDPOINT", "500"))
 END_AT_DBFS_DROP = float(os.environ.get("END_AT_DBFS_DROP", "0"))
@@ -69,7 +74,7 @@ DIALOG_PATH = os.environ.get("DIALOG_PATH", "dialog.jsonl")
 
 # ===== Weryfikacja mówcy =====
 SPEAKER_VERIFY            = int(os.environ.get("SPEAKER_VERIFY", "1"))
-SPEAKER_ENROLL_MODE       = os.environ.get("SPEAKER_ENROLL_MODE", "first_good").strip().lower()
+WAKE_WORDS                = [w.strip() for w in os.environ.get("WAKE_WORDS", "hej watusiu,hej watuszu,hej watusił,kej watusił,hej watośiu").split(",") if w.strip()]
 SPEAKER_THRESHOLD         = float(os.environ.get("SPEAKER_THRESHOLD", "0.64"))
 SPEAKER_STICKY_THRESHOLD  = float(os.environ.get("SPEAKER_STICKY_THRESHOLD", str(SPEAKER_THRESHOLD)))
 SPEAKER_GRACE             = float(os.environ.get("SPEAKER_GRACE", "0.12"))  # lekko w górę – emocje
@@ -84,6 +89,24 @@ SPEAKER_REQUIRE_MATCH     = int(os.environ.get("SPEAKER_REQUIRE_MATCH", "1"))
 WAIT_REPLY_S = float(os.environ.get("WAIT_REPLY_S", "0.6"))  # max czekania na TTS zanim wrócimy do słuchania
 
 def log(msg): print(msg, flush=True)
+
+def is_wake_word_present(text: str) -> bool:
+    """
+    Sprawdza obecność słowa-klucza w bardziej elastyczny sposób.
+    1. Normalizuje tekst wejściowy (małe litery, usuwa znaki interpunkcyjne).
+    2. Sprawdza, czy którakolwiek z fraz kluczowych (również znormalizowana) znajduje się w tekście.
+    """
+    normalized_text = re.sub(r'[^\w\s]', '', text.lower())
+    
+    for wake_phrase in WAKE_WORDS:
+        normalized_wake_phrase = re.sub(r'[^\w\s]', '', wake_phrase.lower())
+        if normalized_wake_phrase in normalized_text:
+            return True
+    return False
+
+# ===== LED Controller =====
+led = LEDController()
+atexit.register(led.cleanup)
 
 def list_devices():
     try:
@@ -194,10 +217,18 @@ class State:
                 or (time.time() < self.waiting_reply_until)
             )
 
-def cue_listen():  log("[Watus][STATE] LISTENING")
-def cue_think():   log("[Watus][STATE] THINKING")
-def cue_speak():   log("[Watus][STATE] SPEAKING")
-def cue_idle():    log("[Watus][STATE] IDLE")
+def cue_listen():
+    log("[Watus][STATE] LISTENING")
+    led.listening()
+def cue_think():
+    log("[Watus][STATE] THINKING")
+    led.processing_or_speaking()
+def cue_speak():
+    log("[Watus][STATE] SPEAKING")
+    led.processing_or_speaking()
+def cue_idle():
+    log("[Watus][STATE] IDLE")
+    led.processing_or_speaking()
 
 # ===== Weryfikator (ECAPA) =====
 class _NoopVerifier:
@@ -267,6 +298,7 @@ def _make_verifier():
                 emb = self._embed(samples, sr)
                 self._enrolled = emb
                 self._enroll_ts = time.time()
+                log(f"[Watus][SPK] Enrolled new leader voice.")
             except Exception as e:
                 log(f"[Watus][SPK] enroll err: {e}")
 
@@ -406,6 +438,7 @@ class STTEngine:
         sil_frames_end     = max(1, SIL_MS_END // frame_ms)
         min_speech_frames  = max(1, VAD_MIN_MS  // frame_ms)
 
+        pre_buffer = deque(maxlen=PREBUFFER_FRAMES)
         speech_frames = bytearray()
         in_speech = False
         started_ms = None
@@ -431,6 +464,7 @@ class STTEngine:
                     in_speech = False; speech_frames = bytearray(); started_ms = None
                     start_voice_run = 0; last_dbfs = None
                     speech_frames_count = 0; silence_run = 0; gap_run = 0
+                    pre_buffer.clear()
                     time.sleep(0.01); continue
 
                 if now_ms < self.cooldown_until:
@@ -446,6 +480,7 @@ class STTEngine:
                     time.sleep(0.01); continue
 
                 frame_bytes = audio.tobytes()
+                pre_buffer.append(frame_bytes)
                 is_sp = self._vad_is_speech(frame_bytes)
 
                 # --- twardy start: kilka ramek powyżej progu dBFS ---
@@ -460,7 +495,9 @@ class STTEngine:
                         if start_voice_run >= START_MIN_FRAMES:
                             in_speech = True
                             speech_frames = bytearray()
-                            started_ms = now_ms
+                            if pre_buffer:
+                                speech_frames.extend(b''.join(pre_buffer))
+                            started_ms = now_ms - (len(pre_buffer) * frame_ms)
                             last_voice_ms = now_ms
                             speech_frames_count = 0
                             silence_run = 0
@@ -504,6 +541,7 @@ class STTEngine:
                     gap_run += frame_ms
                     # toleruj krótką przerwę w środku wypowiedzi
                     if gap_run < GAP_TOL_MS:
+                        speech_frames.extend(frame_bytes) # dodajemy ciszę do bufora na wszelki wypadek
                         continue
 
                     if silence_run >= sil_frames_end and (now_ms - (started_ms or now_ms)) >= MIN_MS_BEFORE_ENDPOINT:
@@ -536,53 +574,65 @@ class STTEngine:
         if dbfs < ASR_MIN_DBFS:
             return
 
-        # enroll (first_good)
-        if (getattr(self.verifier, "enabled", False)
-            and getattr(self.verifier, "enrolled", False) is False
-            and SPEAKER_ENROLL_MODE == "first_good"):
-            try: self.verifier.enroll_samples(pcm_f32, SAMPLE_RATE)
-            except Exception: pass
-
-        verify = self.verifier.verify(pcm_f32, SAMPLE_RATE, dbfs) if self.verifier else {"enabled": False}
-        is_leader = bool(verify.get("is_leader", False)) or (not SPEAKER_REQUIRE_MATCH)
-
-        # transkrypcja
+        # 1. Transkrypcja
         text = self._transcribe_float32(pcm_f32).strip()
         if not text:
             return
 
+        # 2. Logika Lidera oparta na słowie-klucz
+        verify = {}
+        is_leader = False
+        is_wake_word = is_wake_word_present(text)
+
+        if getattr(self.verifier, "enabled", False):
+            if is_wake_word:
+                log("[Watus][SPK] Wykryto słowo-klucz. Rejestrowanie nowego lidera.")
+                self.verifier.enroll_samples(pcm_f32, SAMPLE_RATE)
+                verify = self.verifier.verify(pcm_f32, SAMPLE_RATE, dbfs)
+                is_leader = True
+            elif self.verifier.enrolled:
+                verify = self.verifier.verify(pcm_f32, SAMPLE_RATE, dbfs)
+                is_leader = bool(verify.get("is_leader", False))
+            else:
+                log(f"[Watus][SPK] Brak lidera i słowa-klucz. Ignoruję: '{text}'")
+                return
+        else:
+            # Jeśli weryfikacja jest wyłączona, każda wypowiedź jest od "lidera"
+            is_leader = not SPEAKER_REQUIRE_MATCH
+
+        # 3. Przygotowanie i wysłanie danych
         ts_start = (started_ms or last_voice_ms)/1000.0
         ts_end   = last_voice_ms/1000.0
         turn_id  = int(last_voice_ms)
 
         line = {
-            "type":"leader_utterance" if is_leader else "unknown_utterance",
+            "type": "leader_utterance" if is_leader else "unknown_utterance",
             "session_id": self.state.session_id,
             "group_id": f"{'leader' if is_leader else 'unknown'}_{turn_id}",
             "speaker_id": "leader" if is_leader else "unknown",
             "is_leader": is_leader,
-            "turn_ids":[turn_id],
+            "turn_ids": [turn_id],
             "text_full": text,
-            "category":"wypowiedź",
+            "category": "wypowiedź",
             "reply_hint": is_leader,
             "ts_start": ts_start,
             "ts_end": ts_end,
             "dbfs": dbfs,
             "verify": verify,
-            "emit_reason":"endpoint",
+            "emit_reason": "endpoint",
             "ts": time.time()
         }
         append_dialog_line(line, DIALOG_PATH)
 
         if is_leader:
             log(f"[Watus][PUB] dialog.leader → group={line['group_id']} spk_score={verify.get('score')}")
-            # od teraz NIE nasłuchujemy aż do startu TTS
             self.state.set_awaiting_reply(True)
             self.bus.publish_leader(line)
             self.state.pause_until_reply()
             self.state.tts_pending_until = time.time() + 0.6
         else:
-            log(f"[Watus][SKIP] unknown zapisany, nie wysyłam ZMQ")
+            log(f"[Watus][SKIP] unknown (score={verify.get('score', 0):.2f}) zapisany, nie wysyłam ZMQ")
+
 
 # ===== TTS worker =====
 def tts_worker(state: State, bus: Bus):
@@ -612,6 +662,7 @@ def tts_worker(state: State, bus: Bus):
 if __name__ == "__main__":
     log(f"[Env] ASR=Faster WHISPER_MODEL={WHISPER_MODEL_NAME} WHISPER_DEVICE={WHISPER_DEVICE} "
         f"WHISPER_COMPUTE={WHISPER_COMPUTE} WATUS_BLOCKSIZE={BLOCK_SIZE}")
+    log(f"[Watus] Wake words: {WAKE_WORDS}")
     log(f"[Watus] PUB dialog.leader @ {PUB_ADDR} | SUB tts.speak @ {SUB_ADDR}")
     list_devices()
     bus = Bus(PUB_ADDR, SUB_ADDR)
@@ -624,6 +675,7 @@ if __name__ == "__main__":
         log(f"[Watus] STT init error: {e}"); sys.exit(1)
 
     log(f"[Watus] IO: input={IN_DEV!r} | output={OUT_DEV!r}")
+    led.listening() # Start with listening state
     try:
         stt.run()
     except KeyboardInterrupt:

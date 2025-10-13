@@ -89,6 +89,7 @@ class RTDetrDetector:
       - dodajemy rodzica 'src' do sys.path
       - importujemy from src.rtdetr import RTDetrWrapper
       - miękki fallback na YOLO
+
     """
     def __init__(self, weights: str, score_thr: float):
         import os as _os, sys as _sys
