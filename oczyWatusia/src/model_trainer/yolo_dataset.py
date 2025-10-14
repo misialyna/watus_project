@@ -13,6 +13,7 @@ class YOLOWeightedDataset(dataset.YOLODataset):
 
         super(YOLOWeightedDataset, self).__init__(*args, **kwargs)
 
+        self.counts = None
         self.train_mode = "train" in self.prefix
 
         # You can also specify weights manually instead
@@ -36,11 +37,12 @@ class YOLOWeightedDataset(dataset.YOLODataset):
         self.counts = [0 for i in range(len(self.data["names"]))]
         for label in self.labels:
             cls = label['cls'].reshape(-1).astype(int)
-            for id in cls:
-                self.counts[id] += 1
+            for idx in cls:
+                self.counts[idx] += 1
 
         self.counts = np.array(self.counts)
         self.counts = np.where(self.counts == 0, 1, self.counts)
+        print(f"Counted instances: {self.counts}")
 
     def calculate_weights(self):
         """

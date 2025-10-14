@@ -5,25 +5,28 @@ import shutil
 import cv2
 import numpy as np
 import torch
-import wandb
 import yaml
 from matplotlib import pyplot as plt
 from dotenv import load_dotenv
 import ultralytics.data.build as dataset
+
 from yolo_dataset import YOLOWeightedDataset
 
 load_dotenv()
 
 dataset.YOLODataset = YOLOWeightedDataset
 from ultralytics.models import YOLO
+# from wandb.integration.ultralytics import add_wandb_callback
+# import wandb
 
-ds_dir = "./datasets/clothesYOLO"
+ds_dir = "./datasets/clothesv3"
 data_yaml_path = ds_dir + "/data.yaml"
-test_path=data_yaml_path + "/test"
-base_dir = "./finetuning"
+test_path=ds_dir + "/test"
+base_dir = "./src/model_trainer/"
 model_save_dir = base_dir + "/ft-yolo-models"
 base_model_name = "yolo12s"
 projectName = "OczyWatusia"
+logs_dir = "training_logs"
 
 def create_validation_set(train_images_dir, train_labels_dir, val_images_dir, val_labels_dir):
     os.makedirs(val_images_dir, exist_ok=True)
@@ -52,7 +55,7 @@ def create_validation_set(train_images_dir, train_labels_dir, val_images_dir, va
             shutil.copy2(src_label, dst_label)
 
 
-def train_yolo_model(epochs=1, batch_size=2, img_size=640, lr0=0.01):
+def train_yolo_model(epochs=10, batch_size=8, img_size=640, lr0=0.01):
     # Check for CUDA availability
     device = '0' if torch.cuda.is_available() else 'cpu'
 
@@ -69,8 +72,9 @@ def train_yolo_model(epochs=1, batch_size=2, img_size=640, lr0=0.01):
         model_type = 'yolov8n'
 
     WANDB_API_KEY=os.environ.get('WANDB_API_KEY')
-    wandb.login(key=WANDB_API_KEY)
-    wandb.init(project=projectName, name=run_name, job_type='train')
+    # wandb.login(key=WANDB_API_KEY)
+    # wandb.init(project=projectName, name=run_name, job_type='train')
+    # add_wandb_callback(model, enable_model_checkpointing=True)
     # Train the model
     results = model.train(
         data=data_yaml_path,
@@ -78,34 +82,40 @@ def train_yolo_model(epochs=1, batch_size=2, img_size=640, lr0=0.01):
         batch=batch_size,
         imgsz=img_size,
         weight_decay=0.001,
-        dropout=0.001,
+        dropout=0.01,
         patience=10,
         save=True,
         device=device,
-        project=projectName,
+        project=logs_dir,
         name=run_name,
         lr0=lr0,
         lrf=0.01,
         plots=True,
         save_period=5,
-        freeze=[],
-        classes=[0, 2, 3, 5, 7, 9, 10],
-        workers=8,
-        cache=True,
+        freeze=11,
+        workers=0,
+        # classes=[
+        #     0,
+        #     2,
+        #     # 3,
+        #     5,
+        #     # 7,
+        #     9,
+        #     10
+        # ],
         # augment=True,
         # translate=0.1,
         # scale=0.1,
         # hsv_h=0.015,
         # hsv_s=0.7,
         # hsv_v=0.4,
-        # fraction=0.1,
+        # fraction=0.001,
     )
-
     # Save the model
     model_save_path = os.path.join(model_save_dir, f"{model_type}_{timestamp}.pt")
 
     try:
-        model.model.save(model_save_path)
+        model.save(model_save_path)
     except AttributeError:
         try:
             model.save(model_save_path)
@@ -113,8 +123,8 @@ def train_yolo_model(epochs=1, batch_size=2, img_size=640, lr0=0.01):
             best_model_path = os.path.join(base_dir, 'runs', run_name, 'weights', 'best.pt')
             if os.path.exists(best_model_path):
                 shutil.copy2(best_model_path, model_save_path)
-    finally:
-        wandb.finish()
+    # finally:
+    #     wandb.finish()
     return model
 
 
@@ -122,13 +132,13 @@ def validate_model(model):
     metrics = model.val(
         data=data_yaml_path,
         split='val',
-        project=projectName,
+        project=logs_dir,
         name='val'
     )
 
     # Calculate F1 score
-    f1_score = 2 * metrics.box.precision * metrics.box.recall / (
-                metrics.box.precision + metrics.box.recall + 1e-6)
+    f1_score = 2 * metrics.box.p * metrics.box.r / (
+                metrics.box.p + metrics.box.r + 1e-6)
     print(f"F1 score: {f1_score}")
 
     return metrics

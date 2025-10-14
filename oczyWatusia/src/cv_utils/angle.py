@@ -9,7 +9,7 @@ def calc_obj_angle(
 ) -> float:
     """
     Szacuje poziomy kąt (w stopniach) między frontem kamery (oś optyczna)
-    a środkiem obiektu. Pomija detekcję – zakłada, że p1 i p2 to dwa
+    a środkiem obiektu. Pomija detekcję – zkłada, że p1 i p2 to dwa
     dowolne przeciwległe narożniki prostokąta obiektu w obrazie.
 
     Parametry:

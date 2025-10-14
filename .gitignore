@@ -30,4 +30,6 @@ oczyWatusia_extracted/
 .DS_Store
 Thumbs.db
 datasets/
-OczyWatusia/
+training_logs/
+runs/
+ft-yolo-models/

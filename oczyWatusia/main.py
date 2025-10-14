@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import torch
 
-from src.img_classifiers import detect_color, detect_gender
+# from src.img_classifiers import detect_color, detect_gender
 from src import CVWrapper, Tracker, calc_brightness, calc_obj_angle, suggest_mode
 from src import nms_per_class
 from dotenv import load_dotenv
@@ -58,7 +58,7 @@ def detectFromCamera(
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         out = cv2.VideoWriter(out_path, fourcc, fps_output, (width, height))
 
-    window_name = "RT-DETR – naciśnij 'q' aby wyjść"
+    window_name = "YOLOv12 – naciśnij 'q' aby wyjść"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
     mode = 'light'

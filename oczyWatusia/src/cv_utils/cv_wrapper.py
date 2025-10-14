@@ -26,6 +26,9 @@ class CVWrapper:
         # nazwy klas COCO
         self.class_names = self.model.names  # dict {idx: name}
 
+    def detect(self, frame_bgr):
+        return self.__call__(frame_bgr)
+
     @torch.inference_mode()
     def __call__(self, frame_bgr: np.ndarray) -> List[Dict]:
         """
