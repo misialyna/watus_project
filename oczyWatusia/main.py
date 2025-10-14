@@ -73,7 +73,8 @@ def detectFromCamera(
         "countOfPeople": 0,
         "countOfObjects": 0,
     }
-    # class_names = detector.class_names  # lokalny uchwyt (szybciej)
+    class_names = detector.names  # lokalny uchwyt (szybciej)
+
     ema_fps = 0.0
     ema_alpha = 0.1
     last_stat_t = time.time()
@@ -104,7 +105,7 @@ def detectFromCamera(
             detections["countOfPeople"] = 0
             detections["countOfObjects"] = 0
             detections["objects"] = []
-            # H, W = frame_bgr.shape[:2]
+            H, W = frame_bgr.shape[:2]
 
             run_detection = (frame_idx % det_stride == 0)
 
@@ -127,14 +128,16 @@ def detectFromCamera(
             if dets.boxes and dets.boxes.is_track:
                 boxes = dets.boxes.xywh.cpu()
                 track_ids = dets.boxes.id.int().cpu().tolist()
+                labels = dets.boxes.cls.int().cpu().tolist()
                 frame_bgr = dets.plot()
 
                 # Szybka jasność i tryb
                 brightness = calc_brightness(frame_bgr)
                 mode = suggest_mode(brightness, mode)
 
-                for box, track_id in zip(boxes, track_ids):
+                for box, track_id, label in zip(boxes, track_ids, labels):
                     x, y, w, h = box
+                    angle = calc_obj_angle((x, y), (x + w, y + h), (W, H), 60)
                     track = track_history[track_id]
                     track.append((float(x), float(y)))
                     if len(track) > 30:
@@ -142,6 +145,19 @@ def detectFromCamera(
 
                     points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
                     cv2.polylines(frame_bgr, [points], False, color=(230, 230, 230), thickness=10)
+
+                    detections["objects"].append({
+                        "id": track_id,
+                        "type": class_names[label],
+                        "left": x,
+                        "top": y,
+                        "isPerson": True if label == 0 else False,
+                        "angle": angle,
+                        "additionalInfo": []
+                    })
+                    detections["countOfObjects"] += 1
+                    detections["countOfPeople"] += (1 if label == 0 else 0)
+                    print(detections)
 
             # kolor dla danego toru (modulo długość palety)
             # for i, tr in enumerate(tracks):
@@ -169,17 +185,7 @@ def detectFromCamera(
             #     count_objects += 1
             #     if label_idx == 0:
             #         count_people += 1
-            #     detections["objects"].append({
-            #         "id": tr["track_id"],
-            #         "type": detector.class_names[tr["label"]],
-            #         "left": x1,
-            #         "top": y1,
-            #         "isPerson": True if tr["label"] == 0 else False,
-            #         "angle": angle,
-            #         "additionalInfo": []
-            #     })
-            #     detections["countOfObjects"] += 1
-            #     detections["countOfPeople"] += (1 if tr["label"] == 0 else 0)
+
 
             # FPS (EMA)
             now = time.time()
