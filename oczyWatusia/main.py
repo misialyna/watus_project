@@ -1,8 +1,10 @@
 import time
+from collections import defaultdict
 
 import cv2
 import numpy as np
 import torch
+from ultralytics import YOLO
 
 # from src.img_classifiers import detect_color, detect_gender
 from src import CVWrapper, Tracker, calc_brightness, calc_obj_angle, suggest_mode
@@ -23,7 +25,7 @@ COLORS = np.array([
 COLORS_BGR = (COLORS[:, ::-1] * 255.0).astype(np.uint8)
 
 def detectFromCamera(
-    score_thresh: float = 0.6,
+    score_thresh: float = 0.15,
     iou_thresh: float = 0.55,
     weights: str = "yolo12s.pt",
     imgsz: int = 1280,
@@ -62,15 +64,16 @@ def detectFromCamera(
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
     mode = 'light'
-    detector = CVWrapper(weights=weights, score_thresh=score_thresh, imgsz=imgsz)
+    # detector = CVWrapper(weights=weights, score_thresh=score_thresh, imgsz=imgsz)
     tracker = Tracker()
+    detector = YOLO("yolo12s.pt")
 
     detections = {
         "objects": [],
         "countOfPeople": 0,
         "countOfObjects": 0,
     }
-    class_names = detector.class_names  # lokalny uchwyt (szybciej)
+    # class_names = detector.class_names  # lokalny uchwyt (szybciej)
     ema_fps = 0.0
     ema_alpha = 0.1
     last_stat_t = time.time()
@@ -90,6 +93,7 @@ def detectFromCamera(
     try:
         t_prev = time.time()
 
+        track_history = defaultdict(lambda: [])
         # Pętla
         while True:
             ret, frame_bgr = cap.read()
@@ -100,72 +104,82 @@ def detectFromCamera(
             detections["countOfPeople"] = 0
             detections["countOfObjects"] = 0
             detections["objects"] = []
-            H, W = frame_bgr.shape[:2]
+            # H, W = frame_bgr.shape[:2]
 
             run_detection = (frame_idx % det_stride == 0)
 
-            if run_detection:
-                with torch.inference_mode():
-                    if device.type == "cuda":
-                        from torch.amp import autocast
-                        with autocast(dtype=torch.float32, device_type=device.type):
-                            dets = detector(frame_bgr)
-                    else:
-                        dets = detector(frame_bgr)
-                    dets = nms_per_class(dets, iou_thr=0.5)
-                tracks = tracker.step(frame_bgr, dets)
-            else:
-                dets = nms_per_class(dets, iou_thr=0.5)
-                try:
-                    tracks = tracker.step(frame_bgr, dets)
-                except AttributeError:
-                    tracks = tracker.step(frame_bgr, [])
+            with torch.inference_mode():
+                if device.type == "cuda":
+                    from torch.amp import autocast
+                    with autocast(dtype=torch.float32, device_type=device.type):
+                        dets = detector.track(frame_bgr, persist=True, device=device, verbose=False, imgsz=imgsz)[0]
+                else:
+                        dets = detector.track(frame_bgr, persist=True, device=device, verbose=False, imgsz=imgsz)[0]
+            #         dets = nms_per_class(dets)
+            #     tracks = tracker.step(frame_bgr, dets)
+            # else:
+            #     dets = nms_per_class(dets)
+            #     try:
+            #         tracks = tracker.step(frame_bgr, dets)
+            #     except AttributeError:
+            #         tracks = tracker.step(frame_bgr, [])
 
-            # Szybka jasność i tryb
-            brightness = calc_brightness(frame_bgr)
-            mode = suggest_mode(brightness, mode)
+            if dets.boxes and dets.boxes.is_track:
+                boxes = dets.boxes.xywh.cpu()
+                track_ids = dets.boxes.id.int().cpu().tolist()
+                frame_bgr = dets.plot()
 
-            # Rysowanie i budowa prostych metryk
-            count_people = 0
-            count_objects = 0
+                # Szybka jasność i tryb
+                brightness = calc_brightness(frame_bgr)
+                mode = suggest_mode(brightness, mode)
+
+                for box, track_id in zip(boxes, track_ids):
+                    x, y, w, h = box
+                    track = track_history[track_id]
+                    track.append((float(x), float(y)))
+                    if len(track) > 30:
+                        track.pop(0)
+
+                    points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                    cv2.polylines(frame_bgr, [points], False, color=(230, 230, 230), thickness=10)
 
             # kolor dla danego toru (modulo długość palety)
-            for i, tr in enumerate(tracks):
-                x1, y1, x2, y2 = map(int, tr["bbox"])
-                if x1 == x2 or y1 == y2 or not tr.get("confirmed", False):
-                    continue
-
-                # Uwaga: unikamy PIL i kosztownych kopii
-                # crop = frame_bgr[y1:y2, x1:x2]  # jeśli kiedyś potrzebny
-
-                angle = calc_obj_angle((x1, y1), (x2, y2), (W, H), 60)
-                color = tuple(int(c) for c in COLORS_BGR[i % len(COLORS_BGR)])
-
-                cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, 2)
-
-                track_id = tr["track_id"]
-                label_idx = int(tr["label"])
-                obj_name = class_names[label_idx] if 0 <= label_idx < len(class_names) else str(label_idx)
-                caption = f"ID {track_id} {obj_name}"
-                cv2.putText(frame_bgr, caption, (x1, max(0, y1 - 7)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
-
-
-
-                count_objects += 1
-                if label_idx == 0:
-                    count_people += 1
-                detections["objects"].append({
-                    "id": tr["track_id"],
-                    "type": detector.class_names[tr["label"]],
-                    "left": x1,
-                    "top": y1,
-                    "isPerson": True if tr["label"] == 0 else False,
-                    "angle": angle,
-                    "additionalInfo": []
-                })
-                detections["countOfObjects"] += 1
-                detections["countOfPeople"] += (1 if tr["label"] == 0 else 0)
+            # for i, tr in enumerate(tracks):
+            #     x1, y1, x2, y2 = map(int, tr["bbox"])
+            #     if x1 == x2 or y1 == y2 or not tr.get("confirmed", False):
+            #         continue
+            #
+            #     # Uwaga: unikamy PIL i kosztownych kopii
+            #     # crop = frame_bgr[y1:y2, x1:x2]  # jeśli kiedyś potrzebny
+            #
+            #     angle = calc_obj_angle((x1, y1), (x2, y2), (W, H), 60)
+            #     color = tuple(int(c) for c in COLORS_BGR[i % len(COLORS_BGR)])
+            #
+            #     cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, 2)
+            #
+            #     track_id = tr["track_id"]
+            #     label_idx = int(tr["label"])
+            #     obj_name = class_names[label_idx] if 0 <= label_idx < len(class_names) else str(label_idx)
+            #     caption = f"ID {"track_id"} {obj_name}"
+            #     cv2.putText(frame_bgr, caption, (x1, max(0, y1 - 7)),
+            #                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+            #
+            #
+            #
+            #     count_objects += 1
+            #     if label_idx == 0:
+            #         count_people += 1
+            #     detections["objects"].append({
+            #         "id": tr["track_id"],
+            #         "type": detector.class_names[tr["label"]],
+            #         "left": x1,
+            #         "top": y1,
+            #         "isPerson": True if tr["label"] == 0 else False,
+            #         "angle": angle,
+            #         "additionalInfo": []
+            #     })
+            #     detections["countOfObjects"] += 1
+            #     detections["countOfPeople"] += (1 if tr["label"] == 0 else 0)
 
             # FPS (EMA)
             now = time.time()
@@ -176,7 +190,7 @@ def detectFromCamera(
             # Overlay
             if (now - last_stat_t) >= show_fps_every:
                 last_stat_t = now
-            cv2.putText(frame_bgr, f"FPS: {ema_fps:.1f}  ppl:{count_people} obj:{count_objects}",
+            cv2.putText(frame_bgr, f"FPS: {ema_fps:.1f}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (10, 10, 10), 2, cv2.LINE_AA)
 
             # Podgląd
@@ -202,4 +216,4 @@ def detectFromCamera(
 
 
 if __name__ == "__main__":
-    detectFromCamera(score_thresh=0.35, save_video=False, iou_thresh=0.55, imgsz=640)
+    detectFromCamera(save_video=False, imgsz=640)

@@ -79,10 +79,10 @@ class Track:
 class IoUTracker:
     def __init__(
         self,
-        iou_thresh: float = 0.3,
-        score_thresh: float = 0.5,
-        max_age: int = 15,
-        min_hits: int = 3
+        iou_thresh: float = 0.35,
+        score_thresh: float = 0.4,
+        max_age: int = 10,
+        min_hits: int = 6
     ):
         self.iou_thresh = iou_thresh
         self.score_thresh = score_thresh

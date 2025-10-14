@@ -36,13 +36,15 @@ class CVWrapper:
         Zwraca: listę słowników {bbox:[x1,y1,x2,y2], score:float, label:int}
         """
         # Stream-off + pojedyncza klatka => results to lista długości 1
-        results = self.model.predict(
-            source=frame_bgr,
-            imgsz=self.imgsz,
-            conf=self.score_thresh,
-            device=self.device,
-            verbose=False
-        )
+        # results = self.model.predict(
+        #     source=frame_bgr,
+        #     imgsz=self.imgsz,
+        #     conf=self.score_thresh,
+        #     device=self.device,
+        #     verbose=False
+        # )
+        results = self.model.track(source=frame_bgr, persist=True, device=self.device, verbose=False,
+                                   imgsz=self.imgsz)
         r = results[0]
         dets: List[Dict] = []
         if r.boxes is None or r.boxes.shape[0] == 0:

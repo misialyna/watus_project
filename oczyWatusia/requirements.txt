@@ -11,3 +11,4 @@ matplotlib
 opencv-python
 pycocotools
 accelerate
+lap
