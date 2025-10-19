@@ -55,7 +55,7 @@ def create_validation_set(train_images_dir, train_labels_dir, val_images_dir, va
             shutil.copy2(src_label, dst_label)
 
 
-def train_yolo_model(epochs=10, batch_size=8, img_size=640, lr0=0.01):
+def train_yolo_model(epochs=10, batch_size=4, img_size=640, lr0=0.01):
     # Check for CUDA availability
     device = '0' if torch.cuda.is_available() else 'cpu'
 
@@ -109,7 +109,7 @@ def train_yolo_model(epochs=10, batch_size=8, img_size=640, lr0=0.01):
         # hsv_h=0.015,
         # hsv_s=0.7,
         # hsv_v=0.4,
-        # fraction=0.001,
+        fraction=0.5,
     )
     # Save the model
     model_save_path = os.path.join(model_save_dir, f"{model_type}_{timestamp}.pt")

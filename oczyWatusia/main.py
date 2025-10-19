@@ -6,9 +6,7 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
-# from src.img_classifiers import detect_color, detect_gender
-from src import CVWrapper, Tracker, calc_brightness, calc_obj_angle, suggest_mode
-from src import nms_per_class
+from oczyWatusia.src import calc_brightness, calc_obj_angle, suggest_mode
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -25,8 +23,7 @@ COLORS = np.array([
 COLORS_BGR = (COLORS[:, ::-1] * 255.0).astype(np.uint8)
 
 def detectFromCamera(
-    score_thresh: float = 0.15,
-    iou_thresh: float = 0.55,
+    show_window=False,
     weights: str = "yolo12s.pt",
     imgsz: int = 1280,
     save_video: bool = False,
@@ -34,9 +31,8 @@ def detectFromCamera(
     cam_index: int = 0,
     det_stride: int = 2,          # <— detektor co N klatek
     show_fps_every: float = 0.5,
-
+    cap=None
 ):
-
     cv2.setUseOptimized(True)
     # Urządzenie + drobne usprawnienia wydajnościowe
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -45,10 +41,11 @@ def detectFromCamera(
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True
 
-    cap = cv2.VideoCapture(cam_index)
-    if not cap.isOpened():
-        print("Nie mogę otworzyć kamery")
-        return
+    if cap is None:
+        cap = cv2.VideoCapture(cam_index)
+        if not cap.isOpened():
+            print("Nie mogę otworzyć kamery")
+            return
 
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     out = None
@@ -61,17 +58,18 @@ def detectFromCamera(
         out = cv2.VideoWriter(out_path, fourcc, fps_output, (width, height))
 
     window_name = "YOLOv12 – naciśnij 'q' aby wyjść"
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    if show_window:
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
     mode = 'light'
-    # detector = CVWrapper(weights=weights, score_thresh=score_thresh, imgsz=imgsz)
-    tracker = Tracker()
-    detector = YOLO("yolo12s.pt")
+    detector = YOLO(weights)
 
     detections = {
         "objects": [],
         "countOfPeople": 0,
         "countOfObjects": 0,
+        "suggested_mode": '',
+        "brightness": 0.0,
     }
     class_names = detector.names  # lokalny uchwyt (szybciej)
 
@@ -129,11 +127,15 @@ def detectFromCamera(
                 boxes = dets.boxes.xywh.cpu()
                 track_ids = dets.boxes.id.int().cpu().tolist()
                 labels = dets.boxes.cls.int().cpu().tolist()
-                frame_bgr = dets.plot()
+
+                if show_window:
+                    frame_bgr = dets.plot()
 
                 # Szybka jasność i tryb
                 brightness = calc_brightness(frame_bgr)
                 mode = suggest_mode(brightness, mode)
+                detections["suggested_mode"] = mode
+                detections["brightness"] = brightness
 
                 for box, track_id, label in zip(boxes, track_ids, labels):
                     x, y, w, h = box
@@ -144,7 +146,9 @@ def detectFromCamera(
                         track.pop(0)
 
                     points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
-                    cv2.polylines(frame_bgr, [points], False, color=(230, 230, 230), thickness=10)
+
+                    if show_window:
+                        cv2.polylines(frame_bgr, [points], False, color=(230, 230, 230), thickness=10)
 
                     detections["objects"].append({
                         "id": track_id,
@@ -200,7 +204,8 @@ def detectFromCamera(
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (10, 10, 10), 2, cv2.LINE_AA)
 
             # Podgląd
-            cv2.imshow(window_name, frame_bgr)
+            if show_window:
+                cv2.imshow(window_name, frame_bgr)
 
             # Opcjonalny zapis
             if out is not None:
@@ -222,4 +227,4 @@ def detectFromCamera(
 
 
 if __name__ == "__main__":
-    detectFromCamera(save_video=False, imgsz=640)
+    detectFromCamera(save_video=False, imgsz=640, show_window=False)
