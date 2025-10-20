@@ -4,7 +4,7 @@ from typing import Tuple
 def calc_obj_angle(
     p1: Tuple[float, float],
     p2: Tuple[float, float],
-    image_size: Tuple[int, int],
+    image_width: int,
     fov_deg: float = 60.0,
 ) -> float:
     """
@@ -21,7 +21,7 @@ def calc_obj_angle(
       Kąt w stopniach (dodatni w prawo, ujemny w lewo).
     """
     (x1, y1), (x2, y2) = p1, p2
-    W, H = image_size
+    W = image_width
 
     # Środek prostokąta obiektu
     x_c = 0.5 * (x1 + x2)
