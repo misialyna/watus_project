@@ -67,28 +67,35 @@ cd watus_project
 ## 1) venv
 ### macOS/Linux
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+    python3 -m venv .venv
+    source .venv/bin/activate
 ```
 ### Windows (PowerShell)
 ```bash
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
 ```
 
 ## 2) Deps (bez Torcha) + .env
 ```bash
-pip install -U pip wheel
-pip install -r requirements.txt
-cp .env.example .env
-# uzupełnij: PIPER_BIN, PIPER_MODEL, PIPER_CONFIG, urządzenia audio, ścieżki kamery
+  pip install -U pip wheel
+  pip install -r requirements.txt
+  cp .env.example .env
+  # uzupełnij: PIPER_BIN, PIPER_MODEL, PIPER_CONFIG, urządzenia audio, ścieżki kamery
 ```
+## WAŻNE:
+W linii 30 w `reporter.py` zmień ścieżkę absolutną na swoją!
+```bash
+  CAMERA_JSONL = os.environ.get("CAMERA_JSONL", "/Users/michalinamoszynska/Documents/GitHub/watus_project/camera.jsonl")
+  #zmień na własnąścieżkę absolutną 
+  CAMERA_JSONL = os.environ.get("CAMERA_JSONL", "Twoja_sciezka_absolutna.")
 
+```
 ## 3) Backend LLM (watus-ai)
 Repo:<br>
 https://github.com/pasjonatprogramowania/watus-ai
 ```bash
-uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
+  uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ## 4) Uruchomienie (w 3 terminalach)

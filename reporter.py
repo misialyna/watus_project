@@ -27,7 +27,7 @@ SCENARIOS_DIR = os.environ.get("WATUS_SCENARIOS_DIR", "./scenarios_text")
 SCENARIO_ACTIVE_PATH = os.environ.get("SCENARIO_ACTIVE_PATH", os.path.join(SCENARIOS_DIR, "active.jsonl"))
 
 CAMERA_NAME  = os.environ.get("CAMERA_NAME", "cam_front")
-CAMERA_JSONL = os.environ.get("CAMERA_JSONL", "")
+CAMERA_JSONL = os.environ.get("CAMERA_JSONL", "/Users/michalinamoszynska/Documents/GitHub/watus_project/camera.jsonl")
 
 LOG_DIR   = os.environ.get("LOG_DIR", "./")
 RESP_FILE = os.path.join(LOG_DIR, "responses.jsonl")
