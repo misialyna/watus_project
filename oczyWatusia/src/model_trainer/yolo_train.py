@@ -21,7 +21,7 @@ from ultralytics.models import YOLO
 # from wandb.integration.ultralytics import add_wandb_callback
 # import wandb
 
-ds_dir = "./datasets/finale-6"
+ds_dir = "./datasets/all-no-aug"
 data_yaml_path = ds_dir + "/data.yaml"
 test_path=ds_dir + "/test"
 base_dir = "./src/model_trainer/"
@@ -96,24 +96,8 @@ def train_yolo_model(epochs=30, batch_size=4, img_size=640, lr0=0.01):
         plots=True,
         save_period=5,
         freeze=18,
-        workers=8,
-        classes=[
-            0,
-            1,
-            2,
-            # 3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            # 10,
-            11,
-            12,
-            13,
-            # 14
-        ],
+        workers=0, # 8
+        # classes=[        ],
         # augment=True,
         # translate=0.1,
         # scale=0.1,

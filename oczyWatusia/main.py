@@ -48,7 +48,9 @@ class CVAgent:
             imgsz: int = 640,
             cam_index: int = 0,
             cap=None,
+            json_save_func=None,
         ):
+        self.save_to_json = json_save_func
         self.imgsz = imgsz
         self.track_history = defaultdict(lambda: [])
 
@@ -195,7 +197,7 @@ class CVAgent:
                     track_ids = dets.boxes.id.int().cpu().tolist()
                     labels = dets.boxes.cls.int().cpu().tolist()
 
-                    frame_bgr = dets.plot() if show_window else None
+                    frame_bgr = dets.plot() if show_window else frame_bgr
 
                     detections["brightness"] = calc_brightness(frame_bgr)
                     detections["suggested_mode"] = suggest_mode(detections["brightness"], mode)
@@ -209,10 +211,10 @@ class CVAgent:
                         detections["objects"].append({
                             "id": track_id,
                             "type": self.class_names[label],
-                            "left": x,
-                            "top": y,
-                            "width": w,
-                            "height": h,
+                            "left": x.item(),
+                            "top": y.item(),
+                            "width": w.item(),
+                            "height": h.item(),
                             "isPerson": True if label == 0 else False,
                             "angle": angle,
                             "additionalInfo": []
@@ -223,6 +225,7 @@ class CVAgent:
 
                 ema_fps = self.calc_fps() if show_fps else 0
 
+                self.save_to_json("camera.jsonl", detections) if self.save_to_json is not None else None
                 print(f"Detections: ", pretty_print_dict(detections), f"FPS: {ema_fps:.1f}") if verbose \
                     else None
 
@@ -246,4 +249,4 @@ class CVAgent:
 
 if __name__ == "__main__":
     agent = CVAgent()
-    agent.run(save_video=False, show_window=True)
+    agent.run(save_video=False, show_window=False)

@@ -38,7 +38,7 @@ from typing import List, Dict, Any, Optional
 
 import numpy as np
 
-from oczyWatusia import detectFromCamera
+from oczyWatusia import CVAgent
 
 # ========= USTAWIENIA Z ENV =========
 DEF_JSONL = os.environ.get("CAMERA_JSONL", "./camera.jsonl")
@@ -156,6 +156,7 @@ def write_jsonl(path: str, obj: Dict[str, Any]) -> None:
     try:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            # f.close()
     except Exception as e:
         print(f"[VISION] JSONL write error: {e}", flush=True)
 
@@ -200,7 +201,8 @@ def main():
 
     # Kamera
     cap = open_camera(args.device)
-    detectFromCamera(save_video=False, imgsz=640, show_window=False, cap=cap)
+    agent = CVAgent(json_save_func=write_jsonl)
+    agent.run(save_video=False, show_window=False)
 
 
 if __name__ == "__main__":
