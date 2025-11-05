@@ -1,4 +1,4 @@
-ccelerate==0.31.0
+accelerate==0.31.0
 albucore==0.0.24
 albumentations==2.0.8
 annotated-types==0.7.0
