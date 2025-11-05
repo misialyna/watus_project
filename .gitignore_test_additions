@@ -1,0 +1,156 @@
+# =============================================================================
+# TESTING AND DEVELOPMENT FILES
+# =============================================================================
+
+# Test reports and coverage
+test_reports/
+*.html
+*.xml
+*.json
+coverage.xml
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+
+# Temporary test files
+.tmp/
+temp_*
+test_temp_*
+
+# Performance profiles
+*.prof
+profile_results/
+
+# Test artifacts
+test_artifacts/
+benchmark_results/
+
+# Mock data and fixtures
+mock_data/
+test_data/
+
+# Development tools
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Python development
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Pytest
+.pytest_cache/
+.tox/
+.nox/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# Profiling
+*.prof
+*.pstats
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Environments
+.env.test
+.env.development
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs during testing
+test_*.log
+debug_*.log
+
+# Temporary directories created during tests
+/tmp/
+temp_*
+
+# Virtual environments (if created during testing)
+test_env/
+testing_env/
+
+# Performance benchmarks
+benchmarks/
+*.benchmark
+
+# Test configuration overrides
+test_config.json
+local_test_config.py
+
+# Backup files created during testing
+*.backup
+*.bak
+
+# pytest-benchmark
+.benchmarks/
+
+# Test snapshots (if using pytest-snapshot)
+snapshots/
+
+# Mock service files
+mock_services/
+fake_apis/
+
+# Load testing
+load_test_results/
+
+# Accessibility testing
+accessibility_reports/
+
+# Security testing
+security_scan_results/
+
+# Code quality reports
+quality_reports/
+sonarqube/
