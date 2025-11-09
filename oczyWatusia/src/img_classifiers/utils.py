@@ -4,7 +4,7 @@ from functools import lru_cache
 import torch
 
 @lru_cache(maxsize=1)
-def _get_pipe(model_id):
+def _get_pipe(model_id, task="image-classification"):
     """
     Inicjalizuje i keszuje pipeline do klasyfikacji obrazów.
     Używa GPU (CUDA/MPS), jeśli dostępne, w przeciwnym razie CPU.

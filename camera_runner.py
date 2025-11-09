@@ -38,6 +38,8 @@ from typing import List, Dict, Any, Optional
 
 import numpy as np
 
+from oczyWatusia import CVAgent
+
 # ========= USTAWIENIA Z ENV =========
 DEF_JSONL = os.environ.get("CAMERA_JSONL", "./camera.jsonl")
 DEF_THR   = float(os.environ.get("VISION_SCORE_THR", "0.5"))
@@ -154,6 +156,7 @@ def write_jsonl(path: str, obj: Dict[str, Any]) -> None:
     try:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            # f.close()
     except Exception as e:
         print(f"[VISION] JSONL write error: {e}", flush=True)
 
@@ -198,53 +201,8 @@ def main():
 
     # Kamera
     cap = open_camera(args.device)
-    if not cap.isOpened():
-        print("[VISION] nie można otworzyć kamery", flush=True)
-        sys.exit(2)
-
-    if args.width > 0:  cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
-    if args.height > 0: cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-    if args.fps > 0:    cap.set(cv2.CAP_PROP_FPS, args.fps)
-
-    # Detektor
-    detector = None
-    use_rt = bool(args.rt or DEF_RT)
-    if use_rt:
-        detector = RTDetrDetector(weights=DEF_RTD_WEI, score_thr=args.thr)
-    else:
-        detector = YoloDetector(score_thr=args.thr, model_path=args.model)
-
-    # Info startowe
-    out_path = os.path.abspath(args.jsonl)
-    print(f"[VISION] JSONL → {out_path}", flush=True)
-
-    # Pętla
-    next_write = 0.0
-    period = 1.0 / max(0.1, float(args.hz))
-
-    while True:
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            time.sleep(0.01)
-            continue
-
-        objs = detector.detect(frame)  # type: ignore[arg-type]
-        bri  = brightness_of(frame)
-        H, W = frame.shape[:2]
-
-        now = time.time()
-        if now >= next_write:
-            rec = {
-                "ts": now,
-                "objects": objs,
-                "brightness": bri,
-                "size": [H, W],
-            }
-            write_jsonl(args.jsonl, rec)
-            next_write = now + period
-
-        # nie włączamy okienka GUI – to ma działać headless
-        time.sleep(0.001)
+    agent = CVAgent(json_save_func=write_jsonl)
+    agent.run(save_video=False, show_window=False)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,56 @@
+# Core audio processing
+sounddevice==0.4.7
+soundfile==0.12.1
+webrtcvad==2.0.10
+
+# Speech processing
+faster-whisper==1.0.3
+speechbrain==0.5.16
+
+# PyTorch with CPU support (will upgrade to CUDA if available)
+torch==2.6.0
+torchaudio==2.6.0  
+torchvision==0.21.0
+
+# ML/DL dependencies
+numpy==1.26.4
+scipy==1.16.2
+scikit-learn==1.5.2
+transformers==4.47.0
+tokenizers==0.21.0
+sentencepiece==0.2.1
+
+# Ultralytics for camera detection (will be installed separately)
+# ultralytics==8.3.0  # Commented - install later for better control
+opencv-python==4.10.0.84
+opencv-python-headless==4.10.0.84
+
+# ZMQ for inter-process communication
+pyzmq==25.1.2
+
+# HTTP requests and configuration
+requests==2.32.3
+python-dotenv==1.0.1
+fastapi==0.112.2
+uvicorn==0.30.6
+
+# Audio/ML utilities
+onnx==1.19.0
+onnxruntime==1.22.1
+protobuf==6.32.1
+
+# Basic utilities
+psutil==7.1.0
+tqdm==4.67.1
+click==8.3.0
+packaging==25.0
+typing_extensions==4.15.0
+
+# Optional GPU acceleration (install only if available)
+# ctranslate2==4.6.0  # Install separately for better CUDA support
+# accelerate==0.31.0  # For model loading optimization
+
+# Warning: The following packages may cause conflicts, install separately:
+# faiss-cpu==1.12.0  # Vector similarity (optional)
+# matplotlib==3.9.4  # For visualization (optional)
+# pillow==11.1.0    # Image processing (optional)

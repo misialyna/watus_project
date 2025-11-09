@@ -17,8 +17,9 @@ import soundfile as sf
 import zmq
 import webrtcvad
 
-# === ASR: Faster-Whisper (ONLY) ===
+# === ASR: Choose between Faster-Whisper (local) or Groq API ===
 from faster_whisper import WhisperModel
+from groq_stt import GroqSTT
 
 # === Kontroler diody LED ===
 from led_controller import LEDController
@@ -38,11 +39,20 @@ def _normalize_fw_model(name: str) -> str:
         return f"guillaumekln/faster-whisper-{name.lower()}"
     return name
 
+# ===== STT Configuration =====
+STT_PROVIDER = os.environ.get("STT_PROVIDER", "local").lower()  # "local" for Faster-Whisper, "groq" for Groq API
+
+# Groq API configuration (used when STT_PROVIDER=groq)
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "whisper-large-v3")
+
+# Local Whisper configuration (used when STT_PROVIDER=local)
 WHISPER_MODEL_NAME = _normalize_fw_model(os.environ.get("WHISPER_MODEL", "small"))
 WHISPER_DEVICE     = os.environ.get("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE    = os.environ.get("WHISPER_COMPUTE_TYPE", os.environ.get("WHISPER_COMPUTE", "int8"))
-CPU_THREADS        = int(os.environ.get("WATUS_CPU_THREADS", str(os.cpu_count() or 4)))
 WHISPER_NUM_WORKERS= int(os.environ.get("WHISPER_NUM_WORKERS", "1"))
+
+CPU_THREADS        = int(os.environ.get("WATUS_CPU_THREADS", str(os.cpu_count() or 4)))
 
 PIPER_BIN    = os.environ.get("PIPER_BIN")
 PIPER_MODEL  = os.environ.get("PIPER_MODEL")
@@ -392,9 +402,45 @@ class STTEngine:
         self.state = state
         self.bus = bus
         self.vad = webrtcvad.Vad(VAD_MODE)
+        self.stt_provider = STT_PROVIDER
+        
         log(f"[Watus] STT ready (device={IN_DEV} sr={SAMPLE_RATE} block={BLOCK_SIZE})")
-
-        # Faster-Whisper ONLY
+        
+        # Initialize STT based on provider
+        if self.stt_provider == "groq":
+            self._init_groq_stt()
+        else:
+            self._init_local_whisper()
+            
+        self.verifier = _make_verifier()
+        self.emit_cooldown_ms = EMIT_COOLDOWN_MS
+        self.cooldown_until = 0
+    
+    def _init_groq_stt(self):
+        """Initialize Groq Speech-to-Text API"""
+        if not GROQ_API_KEY:
+            log("[Watus] ERROR: GROQ_API_KEY not provided, falling back to local Whisper")
+            return self._init_local_whisper()
+            
+        try:
+            log(f"[Watus] Groq STT init: model={GROQ_MODEL}")
+            t0 = time.time()
+            self.model = GroqSTT(GROQ_API_KEY, GROQ_MODEL)
+            
+            # Validate API key
+            if not self.model.validate_api_key(GROQ_API_KEY):
+                log("[Watus] ERROR: Invalid GROQ_API_KEY, falling back to local Whisper")
+                return self._init_local_whisper()
+                
+            log(f"[Watus] STT Groq API loaded ({int((time.time()-t0)*1000)} ms)")
+            
+        except Exception as e:
+            log(f"[Watus] ERROR: Failed to initialize Groq STT: {e}")
+            log("[Watus] Falling back to local Whisper")
+            return self._init_local_whisper()
+    
+    def _init_local_whisper(self):
+        """Initialize local Faster-Whisper"""
         log(f"[Watus] FasterWhisper init: model={WHISPER_MODEL_NAME} device={WHISPER_DEVICE} "
             f"compute={WHISPER_COMPUTE} cpu_threads={CPU_THREADS} workers={WHISPER_NUM_WORKERS}")
         t0 = time.time()
@@ -406,9 +452,7 @@ class STTEngine:
             num_workers=WHISPER_NUM_WORKERS
         )
         log(f"[Watus] STT FasterWhisper loaded ({int((time.time()-t0)*1000)} ms)")
-        self.verifier = _make_verifier()
-        self.emit_cooldown_ms = EMIT_COOLDOWN_MS
-        self.cooldown_until = 0
+        self.stt_provider = "local"
 
     @staticmethod
     def _rms_dbfs(x: np.ndarray, eps=1e-9):
@@ -421,11 +465,29 @@ class STTEngine:
 
     def _transcribe_float32(self, pcm_f32: np.ndarray) -> str:
         t0 = time.time()
+        
+        if self.stt_provider == "groq":
+            # Use Groq API for transcription
+            try:
+                txt = self.model.transcribe_numpy(pcm_f32, SAMPLE_RATE, "pl")
+                log(f"[Perf] ASR_groq_ms={int((time.time()-t0)*1000)} len={len(txt)}")
+                return txt
+            except Exception as e:
+                log(f"[Watus] Groq transcription failed: {e}")
+                log("[Watus] Falling back to local Whisper")
+                return self._transcribe_local(pcm_f32)
+        else:
+            # Use local Faster-Whisper
+            return self._transcribe_local(pcm_f32)
+    
+    def _transcribe_local(self, pcm_f32: np.ndarray) -> str:
+        """Transcribe using local Faster-Whisper"""
+        t0 = time.time()
         segments, _ = self.model.transcribe(
             pcm_f32, language="pl", beam_size=1, vad_filter=False
         )
         txt = "".join(seg.text for seg in segments)
-        log(f"[Perf] ASR_ms={int((time.time()-t0)*1000)} len={len(txt)}")
+        log(f"[Perf] ASR_local_ms={int((time.time()-t0)*1000)} len={len(txt)}")
         return txt
 
     def run(self):

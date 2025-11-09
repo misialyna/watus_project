@@ -13,13 +13,15 @@ import ultralytics.data.build as dataset
 from yolo_dataset import YOLOWeightedDataset
 
 load_dotenv()
+if os.environ.get("USE_EXPERIMENTAL_BALANCER", "0") == "1":
+    print("!Using experimental balancer!")
+    dataset.YOLODataset = YOLOWeightedDataset
 
-dataset.YOLODataset = YOLOWeightedDataset
 from ultralytics.models import YOLO
 # from wandb.integration.ultralytics import add_wandb_callback
 # import wandb
 
-ds_dir = "./datasets/clothesv3"
+ds_dir = "./datasets/all-no-aug"
 data_yaml_path = ds_dir + "/data.yaml"
 test_path=ds_dir + "/test"
 base_dir = "./src/model_trainer/"
@@ -55,7 +57,7 @@ def create_validation_set(train_images_dir, train_labels_dir, val_images_dir, va
             shutil.copy2(src_label, dst_label)
 
 
-def train_yolo_model(epochs=10, batch_size=8, img_size=640, lr0=0.01):
+def train_yolo_model(epochs=30, batch_size=4, img_size=640, lr0=0.01):
     # Check for CUDA availability
     device = '0' if torch.cuda.is_available() else 'cpu'
 
@@ -82,6 +84,7 @@ def train_yolo_model(epochs=10, batch_size=8, img_size=640, lr0=0.01):
         batch=batch_size,
         imgsz=img_size,
         weight_decay=0.001,
+        close_mosaic=0,
         dropout=0.01,
         patience=10,
         save=True,
@@ -92,24 +95,15 @@ def train_yolo_model(epochs=10, batch_size=8, img_size=640, lr0=0.01):
         lrf=0.01,
         plots=True,
         save_period=5,
-        freeze=11,
-        workers=0,
-        # classes=[
-        #     0,
-        #     2,
-        #     # 3,
-        #     5,
-        #     # 7,
-        #     9,
-        #     10
-        # ],
+        freeze=18,
+        workers=0, # 8
+        # classes=[        ],
         # augment=True,
         # translate=0.1,
         # scale=0.1,
         # hsv_h=0.015,
         # hsv_s=0.7,
         # hsv_v=0.4,
-        # fraction=0.001,
     )
     # Save the model
     model_save_path = os.path.join(model_save_dir, f"{model_type}_{timestamp}.pt")
