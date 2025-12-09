@@ -14,9 +14,9 @@ def calc_brightness(bgr_img):
     return float(np.mean(gray) / 255.0)
 
 def suggest_mode(brightness, current):
-    if brightness <= 33 and current == 'light':
+    if brightness <= 0.33 and current == 'light':
         return 'dark'
-    elif brightness > 66 and current == 'dark':
+    elif brightness > 0.66 and current == 'dark':
         return 'light'
     else:
         return current

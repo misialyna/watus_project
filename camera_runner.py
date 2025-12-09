@@ -201,8 +201,13 @@ def main():
 
     # Kamera
     cap = open_camera(args.device)
-    agent = CVAgent(json_save_func=write_jsonl)
-    agent.run(save_video=False, show_window=False)
+    agent = CVAgent(
+        json_save_func=write_jsonl,
+        weights_path="best.pt",
+        # source="to_detect1.mp4"
+        source=1
+    )
+    agent.run(save_video=True, show_window=True, verbose=True)
 
 
 if __name__ == "__main__":

@@ -485,9 +485,11 @@
 # Test binary, built with `go test -c`
 **/*.test
 
+*.mp4
+
 # Output of the go coverage tool
 **/*.out
-
+**/training_logs
 # Dependency directories
 **/vendor/
 

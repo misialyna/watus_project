@@ -1,3 +1,6 @@
+import urllib
+
+from PIL import Image
 from transformers import pipeline
 from functools import lru_cache
 
@@ -21,3 +24,10 @@ def _get_pipe(model_id, task="image-classification"):
         model=model_id,
         device=device,
     )
+
+
+def retrieve_img(url):
+    urllib.request.urlretrieve(url, "img.jpg")
+    img = Image.open("img.jpg")
+
+    return img

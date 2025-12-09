@@ -46,7 +46,7 @@ class CVAgent:
             self,
             weights_path: str = "yolo12s.pt",
             imgsz: int = 640,
-            cam_index: int = 0,
+            source: int | str = 0,
             cap=None,
             json_save_func=None,
         ):
@@ -62,7 +62,7 @@ class CVAgent:
             torch.backends.cudnn.benchmark = True
 
         if cap is None:
-            self.cap = cv2.VideoCapture(cam_index)
+            self.cap = cv2.VideoCapture(source)
             if not self.cap.isOpened():
                 print("Nie mogę otworzyć kamery")
                 return
@@ -102,7 +102,6 @@ class CVAgent:
     def init_window(self):
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
 
-
     def actualize_tracks(self, frame_bgr, track_id, point: tuple[int, int]):
         x, y = point
         track = self.track_history[track_id]
@@ -140,14 +139,18 @@ class CVAgent:
 
     def detect_objects(self, frame_bgr, imgsz: int = 640, run_detection=True):
         if run_detection:
+            iou = 0.7
+            conf = 0.3
             with torch.inference_mode():
                 if self.device.type == "cuda":
                     with autocast(dtype=torch.float32, device_type=self.device.type):
-                        detections = self.detector.track(frame_bgr, persist=True, device=self.device, verbose=False,
-                                                  imgsz=imgsz)
+                        detections = self.detector.track(frame_bgr, persist=True,
+                                                         device=self.device, verbose=False,
+                                                  imgsz=imgsz, iou=iou, conf=conf)
                 else:
-                    detections = self.detector.track(frame_bgr, persist=True, device=self.device, verbose=False,
-                                              imgsz=imgsz)
+                    detections = self.detector.track(frame_bgr, persist=True,
+                                                     device=self.device, verbose=False,
+                                              imgsz=imgsz, iou=iou, conf=conf)
         return detections[0]
 
     def run(
@@ -158,9 +161,13 @@ class CVAgent:
         det_stride: int = 1,
         show_fps: bool = True,
         verbose: bool = True,
+        verbose_window: bool = True,
         fov_deg: int = 60,
     ):
         save_video = self.init_recorder(out_path) if save_video else None
+        if show_window is False or show_window is None:
+            verbose_window = False
+
         self.init_window() if show_window else None
 
         detections = {
@@ -192,6 +199,9 @@ class CVAgent:
 
                 dets = self.detect_objects(frame_bgr, run_detection=run_detection)
 
+                detections["brightness"] = calc_brightness(frame_bgr)
+                detections["suggested_mode"] = suggest_mode(detections["brightness"], mode)
+
                 if dets.boxes and dets.boxes.is_track:
                     boxes = dets.boxes.xywh.cpu()
                     track_ids = dets.boxes.id.int().cpu().tolist()
@@ -199,14 +209,11 @@ class CVAgent:
 
                     frame_bgr = dets.plot() if show_window else frame_bgr
 
-                    detections["brightness"] = calc_brightness(frame_bgr)
-                    detections["suggested_mode"] = suggest_mode(detections["brightness"], mode)
-
                     for box, track_id, label in zip(boxes, track_ids, labels):
                         x, y, w, h = box
                         angle = calc_obj_angle((x, y), (x + w, y + h), self.imgsz, fov_deg=fov_deg)
 
-                        self.actualize_tracks(frame_bgr, track_id, (x, y)) if show_window else None
+                        self.actualize_tracks(frame_bgr, track_id, (x, y)) if verbose_window else None
 
                         detections["objects"].append({
                             "id": track_id,
@@ -222,8 +229,25 @@ class CVAgent:
                         detections["countOfObjects"] += 1
                         detections["countOfPeople"] += (1 if label == 0 else 0)
 
-
                 ema_fps = self.calc_fps() if show_fps else 0
+
+                height = frame_bgr.shape[0]
+
+                cv2.rectangle(frame_bgr, (0, height), (200,height-95), (0, 0, 0), -1) if verbose_window else None
+                cv2.putText(frame_bgr, f"FPS: {ema_fps:0,.2f}", (0,height-60),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1,
+                            (255,255,255), 2) if verbose_window else None
+                cv2.putText(frame_bgr, f"Light: {detections["brightness"]:0,.2f}",
+                            (0, height-30),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1,
+                            (255, 255, 255), 2) if verbose_window else None
+                cv2.putText(frame_bgr, f"Mode: {detections["suggested_mode"]}",
+                            (0, height),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1,
+                            (255, 255, 255), 2) if verbose_window else None
 
                 self.save_to_json("camera.jsonl", detections) if self.save_to_json is not None else None
                 print(f"Detections: ", pretty_print_dict(detections), f"FPS: {ema_fps:.1f}") if verbose \
@@ -249,4 +273,4 @@ class CVAgent:
 
 if __name__ == "__main__":
     agent = CVAgent()
-    agent.run(save_video=False, show_window=False)
+    agent.run(save_video=True, show_window=True)
