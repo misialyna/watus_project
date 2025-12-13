@@ -205,7 +205,7 @@ def main():
         json_save_func=write_jsonl,
         weights_path="best.pt",
         # source="to_detect1.mp4"
-        source=1
+        source=0
     )
     agent.run(save_video=True, show_window=True, verbose=True)
 
