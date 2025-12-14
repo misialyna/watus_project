@@ -10,7 +10,10 @@ import math
 from PIL import Image
 from ultralytics import YOLO
 
-from oczyWatusia.src.img_classifiers.image_classifier import getClassifiers
+GPU_ENABLED = False
+
+if GPU_ENABLED:
+    from oczyWatusia.src.img_classifiers.image_classifier import getClassifiers, getClothesClassifiers
 
 from oczyWatusia.src import calc_brightness, calc_obj_angle, suggest_mode
 from dotenv import load_dotenv
@@ -67,7 +70,9 @@ class CVAgent:
             torch.backends.cudnn.benchmark = True
         
         # Load Classifiers
-        self.emotion_classifier, self.gender_classifier, self.age_classifier = getClassifiers()
+        if GPU_ENABLED:
+            self.emotion_classifier, self.gender_classifier, self.age_classifier = getClassifiers()
+            self.clothes_type_clf, self.clothes_pattern_clf, self.color_clf = getClothesClassifiers()
         self.person_cache = {} # track_id -> {last_frame: int, gender: str, age: str, emotion: str}
 
         if cap is None:
@@ -179,7 +184,7 @@ class CVAgent:
         fov_deg: int = 60,
         consolidate_with_lidar: bool = False,
     ):
-        lidar_path = "lidar.jsonl"
+        lidar_path = "../lidar/data/lidar.jsonl"
         lidar_tracks_data = []
 
         def get_lidar_tracks():
@@ -306,69 +311,127 @@ class CVAgent:
 
                             if b_x2 > b_x1 and b_y2 > b_y1:
                                 person_crop = frame_bgr[b_y1:b_y2, b_x1:b_x2]
+                                current_h, current_w = person_crop.shape[:2]
                                 
-                                # --- CLOTHES DETECTION ---
-                                # Inference
-                                results_clothes = self.clothes_detector.predict(person_crop, verbose=False)
-                                for rc in results_clothes:
-                                    c_boxes = rc.boxes.xyxy.cpu().numpy()
-                                    c_clss  = rc.boxes.cls.cpu().numpy()
-                                    c_conf  = rc.boxes.conf.cpu().numpy()
-                                    c_names = rc.names
+                                # Check cache
+                                cache_entry = self.person_cache.get(track_id, {"last_frame": -9999})
+                                should_update = (self.frame_idx - cache_entry["last_frame"]) > 100
 
-                                    for cb, cc, ccnf in zip(c_boxes, c_clss, c_conf):
-                                        cx1, cy1, cx2, cy2 = cb
-                                        # Transform to global
-                                        gx1 = int(b_x1 + cx1)
-                                        gy1 = int(b_y1 + cy1)
-                                        gx2 = int(b_x1 + cx2)
-                                        gy2 = int(b_y1 + cy2)
+                                if should_update:
+                                    # --- UPDATE CACHE (Clothes + Classifiers) ---
+                                    new_cache = {
+                                        "last_frame": self.frame_idx,
+                                        "clothes": [],
+                                        "emotion": cache_entry.get("emotion"),
+                                        "gender": cache_entry.get("gender"),
+                                        "age": cache_entry.get("age")
+                                    }
 
-                                        # Draw
-                                        color = (0, 0, 255) # Red for clothes
+                                    # 1. CLOTHES
+                                    results_clothes = self.clothes_detector.predict(person_crop, verbose=False)
+                                    clothes_data = []
+                                    for rc in results_clothes:
+                                        c_boxes = rc.boxes.xyxy.cpu().numpy()
+                                        c_clss  = rc.boxes.cls.cpu().numpy()
+                                        c_conf  = rc.boxes.conf.cpu().numpy()
+                                        c_names = rc.names
+                                        for cb, cc, ccnf in zip(c_boxes, c_clss, c_conf):
+                                            # Normalize coordinates (0-1) relative to crop
+                                            cx1, cy1, cx2, cy2 = cb
+                                            norm_box = [cx1/current_w, cy1/current_h, cx2/current_w, cy2/current_h]
+                                            
+                                            details = {}
+                                            label_name = c_names[int(cc)]
+                                            
+                                            
+                                            # Sub-crop for the specific item
+                                            # Coordinates are relative to person_crop
+                                            icx1, icy1, icx2, icy2 = int(cx1), int(cy1), int(cx2), int(cy2)
+                                            # Clamp
+                                            icx1 = max(0, icx1); icy1 = max(0, icy1)
+                                            icx2 = min(current_w, icx2); icy2 = min(current_h, icy2)
+                                            
+                                            if icx2 > icx1 and icy2 > icy1:
+                                                item_crop = person_crop[icy1:icy2, icx1:icx2]
+                                                try:
+                                                    item_pil = Image.fromarray(cv2.cvtColor(item_crop, cv2.COLOR_BGR2RGB))
+                                                    
+                                                    # Color for all relevant classes
+                                                    if label_name in ["clothing", "shoe", "bag"] and GPU_ENABLED:
+                                                        # color_clf returns tuple (R, G, B) or similar
+                                                        # Assuming simple tuple or string logic. 
+                                                        # User said "zwraca krotkę w RGB". We should probably format it.
+                                                        
+                                                        dom_color = self.color_clf(np.asarray(item_pil))
+                                                        details["color"] = dom_color
+                                                    
+                                                    # Details for "clothing"
+                                                    if label_name == "clothing" and GPU_ENABLED:
+                                                        res_type = self.clothes_type_clf.process(item_pil)
+                                                        details["type"] = max(res_type, key=res_type.get)
+                                                        
+                                                        res_pat = self.clothes_pattern_clf.process(item_pil)
+                                                        details["pattern"] = max(res_pat, key=res_pat.get)
+                                                        
+                                                except Exception as e:
+                                                    print(f"Clothes detail error: {e}")
+
+                                            clothes_data.append({
+                                                "box_norm": norm_box,
+                                                "label": label_name,
+                                                "class_num": int(cc),
+                                                "conf": float(ccnf),
+                                                "details": details
+                                            })
+                                    new_cache["clothes"] = clothes_data
+
+                                    # 2. CLASSIFIERS
+                                    try:
+                                        pil_img = Image.fromarray(cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB))
+
+                                        if GPU_ENABLED:
+                                            res_emo = self.emotion_classifier.process(pil_img)
+                                            new_cache["emotion"] = max(res_emo, key=res_emo.get)
+
+                                            res_gen = self.gender_classifier.process(pil_img)
+                                            new_cache["gender"] = max(res_gen, key=res_gen.get)
+
+                                            res_age = self.age_classifier.process(pil_img)
+                                            new_cache["age"] = max(res_age, key=res_age.get)
+                                    except Exception as e:
+                                        print(f"Classifier error: {e}")
+                                    
+                                    self.person_cache[track_id] = new_cache
+                                    cache_entry = new_cache
+
+                                # --- DRAW FROM CACHE ---
+                                # Draw Clothes
+                                if "clothes" in cache_entry:
+                                    for item in cache_entry["clothes"]:
+                                        nx1, ny1, nx2, ny2 = item["box_norm"]
+                                        label_txt = f"{item['label']} {item['conf']:.2f}"
+                                        
+                                        # Denormalize to current frame global coordinates
+                                        gx1 = int(b_x1 + nx1 * current_w)
+                                        gy1 = int(b_y1 + ny1 * current_h)
+                                        gx2 = int(b_x1 + nx2 * current_w)
+                                        gy2 = int(b_y1 + ny2 * current_h)
+
+                                        color = (0, 0, 255)
                                         cv2.rectangle(frame_bgr, (gx1, gy1), (gx2, gy2), color, 2)
-                                        label_txt = f"{c_names[int(cc)]} {ccnf:.2f}"
                                         cv2.putText(frame_bgr, label_txt, (gx1, gy1 - 5),
                                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-                                # --- CLASSIFIERS (Age, Gender, Emotion) ---
-                                # Check cache
-                                cache_entry = self.person_cache.get(track_id, {"last_frame": -9999})
-                                if (self.frame_idx - cache_entry["last_frame"]) > 100:
-                                     # Convert to PIL
-                                    try:
-                                        # CV2 is BGR, PIL needs RGB
-                                        pil_img = Image.fromarray(cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB))
-                                        
-                                        # Run Classifiers
-                                        # process returns dict {label: prob}. We take max key.
-                                        res_emo = self.emotion_classifier.process(pil_img)
-                                        emo_label = max(res_emo, key=res_emo.get)
-                                        
-                                        res_gen = self.gender_classifier.process(pil_img)
-                                        gen_label = max(res_gen, key=res_gen.get)
-                                        
-                                        res_age = self.age_classifier.process(pil_img)
-                                        age_label = max(res_age, key=res_age.get)
-                                        
-                                        cache_entry = {
-                                            "last_frame": self.frame_idx,
-                                            "emotion": emo_label,
-                                            "gender": gen_label,
-                                            "age": age_label
-                                        }
-                                        self.person_cache[track_id] = cache_entry
-                                    except Exception as e:
-                                        print(f"Classifier error: {e}")
-
-                        # Use cached info if available, even if we didn't update valid this frame
-                        p_info = self.person_cache.get(track_id, {})
-                        
-                        # Pack additional info
-                        add_info = []
-                        if "gender" in p_info: add_info.append({"gender": p_info["gender"]})
-                        if "age" in p_info: add_info.append({"age": p_info["age"]})
-                        if "emotion" in p_info: add_info.append({"emotion": p_info["emotion"]})
+                                # Attributes info
+                                add_info = []
+                                if "gender" in cache_entry and cache_entry["gender"]: 
+                                    add_info.append({"gender": cache_entry["gender"]})
+                                if "age" in cache_entry and cache_entry["age"]: 
+                                    add_info.append({"age": cache_entry["age"]})
+                                if "emotion" in cache_entry and cache_entry["emotion"]: 
+                                    add_info.append({"emotion": cache_entry["emotion"]})
+                                if "clothes" in cache_entry and cache_entry["clothes"]:
+                                    add_info.append({"clothes": cache_entry["clothes"]})
 
                         
                         # --- LIDAR INFO ---
@@ -444,4 +507,4 @@ class CVAgent:
 
 if __name__ == "__main__":
     agent = CVAgent()
-    agent.run(save_video=True, show_window=True, consolidate_with_lidar=True)
+    agent.run(save_video=True, show_window=True, consolidate_with_lidar=False)

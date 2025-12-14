@@ -69,6 +69,46 @@ class AgeClassifier(ImageClassifier):
             "4": "Aged 65+"
         }
 
+class ClothesClassifier(ImageClassifier):
+    def __init__(self):
+        super().__init__("samokosik/finetuned-clothes")
+        self.id2label = {
+            "0": "Hat",
+            "1": "Longsleeve",
+            "2": "Outwear",
+            "3": "Pants",
+            "4": "Shoes",
+            "5": "Shorts",
+            "6": "Shortsleeve"
+        }
+class ClothesPatternClassifier(ImageClassifier):
+    def __init__(self):
+        super().__init__("IrshadG/Clothes_Pattern_Classification_v2")
+        self.id2label = {
+            "0": "Argyle",
+            "1": "Check",
+            "2": "Colour blocking",
+            "3": "Denim",
+            "4": "Dot",
+            "5": "Embroidery",
+            "6": "Lace",
+            "7": "Metallic",
+            "8": "Patterns",
+            "9": "Placement print"
+            "10": "Sequin",
+            "11": "Solid",
+            "12": "Stripe",
+            "13": "Transparent",
+        }
+
+def getClothesClassifiers():
+    clothes_classifier = ClothesClassifier()
+    clothes_pattern_classifier = ClothesPatternClassifier()
+    color_classifier = findDominantColor
+    clothes_classifier.load_models()
+    clothes_pattern_classifier.load_models()
+    return clothes_classifier, clothes_pattern_classifier, color_classifier
+
 def getClassifiers():
     emotion_classifier = EmotionClassifier()
     gender_classifier = GenderClassifier()
