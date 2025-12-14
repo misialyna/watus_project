@@ -338,7 +338,7 @@ class CVAgent:
                                         for cb, cc, ccnf in zip(c_boxes, c_clss, c_conf):
                                             # Normalize coordinates (0-1) relative to crop
                                             cx1, cy1, cx2, cy2 = cb
-                                            norm_box = [cx1/current_w, cy1/current_h, cx2/current_w, cy2/current_h]
+                                            norm_box = [float(cx1)/current_w, float(cy1)/current_h, float(cx2)/current_w, float(cy2)/current_h]
                                             
                                             details = {}
                                             label_name = c_names[int(cc)]
@@ -363,7 +363,7 @@ class CVAgent:
                                                         # User said "zwraca krotkę w RGB". We should probably format it.
                                                         
                                                         dom_color = self.color_clf(np.asarray(item_pil))
-                                                        details["color"] = dom_color
+                                                        details["color"] = [int(x) for x in dom_color]
                                                     
                                                     # Details for "clothing"
                                                     if label_name == "clothing" and GPU_ENABLED:
