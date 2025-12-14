@@ -5,7 +5,12 @@ from collections import defaultdict
 import cv2
 import numpy as np
 import torch
+import json
+import math
+from PIL import Image
 from ultralytics import YOLO
+
+from oczyWatusia.src.img_classifiers.image_classifier import getClassifiers
 
 from oczyWatusia.src import calc_brightness, calc_obj_angle, suggest_mode
 from dotenv import load_dotenv
@@ -60,6 +65,10 @@ class CVAgent:
 
         if self.device.type == "cuda":
             torch.backends.cudnn.benchmark = True
+        
+        # Load Classifiers
+        self.emotion_classifier, self.gender_classifier, self.age_classifier = getClassifiers()
+        self.person_cache = {} # track_id -> {last_frame: int, gender: str, age: str, emotion: str}
 
         if cap is None:
             self.cap = cv2.VideoCapture(source)
@@ -85,6 +94,11 @@ class CVAgent:
 
         self.detector = YOLO(weights_path)
         self.class_names = self.detector.names
+        
+        # Inicjalizacja modelu do ubrań
+        clothes_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../models/cv/best.pt')
+        self.clothes_detector = YOLO(clothes_path)
+        
         self.window_name = f"YOLOv12 – naciśnij '{ESCAPE_BUTTON}' aby wyjść"
 
     def init_recorder(self, out_path):
@@ -163,7 +177,35 @@ class CVAgent:
         verbose: bool = True,
         verbose_window: bool = True,
         fov_deg: int = 60,
+        consolidate_with_lidar: bool = False,
     ):
+        lidar_path = "lidar.jsonl"
+        lidar_tracks_data = []
+
+        def get_lidar_tracks():
+            """Reads the last line of lidar.jsonl"""
+            try:
+                if not os.path.exists(lidar_path):
+                    return []
+                # Efficiently read last line - for now just readlines (simple) or Seek
+                # Since we don't have a giant file helper, standard read is okay for small buffer or we assume append
+                with open(lidar_path, 'r') as f:
+                    lines = f.readlines()
+                    if not lines:
+                        return []
+                    last_line = lines[-1].strip()
+                    if not last_line:
+                        return []
+                    data = json.loads(last_line)
+                    return data.get("tracks", [])
+            except Exception as e:
+                # print(f"Lidar read error: {e}")
+                return []
+        
+        def compute_lidar_angle_local(lx, ly):
+            # angle in degrees
+            return math.degrees(math.atan2(lx, ly))
+
         save_video = self.init_recorder(out_path) if save_video else None
         if show_window is False or show_window is None:
             verbose_window = False
@@ -204,16 +246,144 @@ class CVAgent:
 
                 if dets.boxes and dets.boxes.is_track:
                     boxes = dets.boxes.xywh.cpu()
+                    boxes_xyxy = dets.boxes.xyxy.cpu()  # Potrzebne do wycinania
                     track_ids = dets.boxes.id.int().cpu().tolist()
                     labels = dets.boxes.cls.int().cpu().tolist()
+                    
+                    # --- LIDAR SYNC ---
+                    lidar_matches = {} # map track_id -> lidar_track_dict
+                    if consolidate_with_lidar:
+                        l_tracks = get_lidar_tracks()
+                        # Simple greedy matching
+                        used_lidar_indices = set()
+                        
+                        # Precompute camera angles for all people
+                        people_indices = [idx for idx, lbl in enumerate(labels) if lbl == 0]
+                        
+                        person_angles = []
+                        for idx in people_indices:
+                             _x, _y, _w, _h = boxes[idx]
+                             _ang = calc_obj_angle((_x, _y), (_x + _w, _y + _h), self.imgsz, fov_deg=fov_deg)
+                             person_angles.append((idx, _ang))
+                             
+                        # Try to match each person to closest lidar track
+                        for p_idx, p_ang in person_angles:
+                            best_lidar_idx = -1
+                            min_diff = 1000.0
+                            
+                            for l_idx, lt in enumerate(l_tracks):
+                                if l_idx in used_lidar_indices:
+                                    continue
+                                l_pos = lt.get("last_position", [0, 0])
+                                l_ang = compute_lidar_angle_local(l_pos[0], l_pos[1])
+                                
+                                diff = abs(p_ang - l_ang)
+                                if diff < min_diff and diff < 20.0: # Tolerance
+                                    min_diff = diff
+                                    best_lidar_idx = l_idx
+                            
+                            if best_lidar_idx != -1:
+                                used_lidar_indices.add(best_lidar_idx)
+                                # Map camera track_id (if exists) or just index to lidar data
+                                # Here we map for the loop below
+                                lidar_matches[p_idx] = l_tracks[best_lidar_idx]
 
                     frame_bgr = dets.plot() if show_window else frame_bgr
 
-                    for box, track_id, label in zip(boxes, track_ids, labels):
+                    for i, (box, track_id, label) in enumerate(zip(boxes, track_ids, labels)):
                         x, y, w, h = box
                         angle = calc_obj_angle((x, y), (x + w, y + h), self.imgsz, fov_deg=fov_deg)
 
                         self.actualize_tracks(frame_bgr, track_id, (x, y)) if verbose_window else None
+
+                        # --- CLOTHES DETECTION ON PERSON ---
+                        if label == 0:  # Person
+                            b_x1, b_y1, b_x2, b_y2 = map(int, boxes_xyxy[i].tolist())
+                            # Clamp
+                            H_frame, W_frame = frame_bgr.shape[:2]
+                            b_x1 = max(0, b_x1); b_y1 = max(0, b_y1)
+                            b_x2 = min(W_frame, b_x2); b_y2 = min(H_frame, b_y2)
+
+                            if b_x2 > b_x1 and b_y2 > b_y1:
+                                person_crop = frame_bgr[b_y1:b_y2, b_x1:b_x2]
+                                
+                                # --- CLOTHES DETECTION ---
+                                # Inference
+                                results_clothes = self.clothes_detector.predict(person_crop, verbose=False)
+                                for rc in results_clothes:
+                                    c_boxes = rc.boxes.xyxy.cpu().numpy()
+                                    c_clss  = rc.boxes.cls.cpu().numpy()
+                                    c_conf  = rc.boxes.conf.cpu().numpy()
+                                    c_names = rc.names
+
+                                    for cb, cc, ccnf in zip(c_boxes, c_clss, c_conf):
+                                        cx1, cy1, cx2, cy2 = cb
+                                        # Transform to global
+                                        gx1 = int(b_x1 + cx1)
+                                        gy1 = int(b_y1 + cy1)
+                                        gx2 = int(b_x1 + cx2)
+                                        gy2 = int(b_y1 + cy2)
+
+                                        # Draw
+                                        color = (0, 0, 255) # Red for clothes
+                                        cv2.rectangle(frame_bgr, (gx1, gy1), (gx2, gy2), color, 2)
+                                        label_txt = f"{c_names[int(cc)]} {ccnf:.2f}"
+                                        cv2.putText(frame_bgr, label_txt, (gx1, gy1 - 5),
+                                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+                                # --- CLASSIFIERS (Age, Gender, Emotion) ---
+                                # Check cache
+                                cache_entry = self.person_cache.get(track_id, {"last_frame": -9999})
+                                if (self.frame_idx - cache_entry["last_frame"]) > 100:
+                                     # Convert to PIL
+                                    try:
+                                        # CV2 is BGR, PIL needs RGB
+                                        pil_img = Image.fromarray(cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB))
+                                        
+                                        # Run Classifiers
+                                        # process returns dict {label: prob}. We take max key.
+                                        res_emo = self.emotion_classifier.process(pil_img)
+                                        emo_label = max(res_emo, key=res_emo.get)
+                                        
+                                        res_gen = self.gender_classifier.process(pil_img)
+                                        gen_label = max(res_gen, key=res_gen.get)
+                                        
+                                        res_age = self.age_classifier.process(pil_img)
+                                        age_label = max(res_age, key=res_age.get)
+                                        
+                                        cache_entry = {
+                                            "last_frame": self.frame_idx,
+                                            "emotion": emo_label,
+                                            "gender": gen_label,
+                                            "age": age_label
+                                        }
+                                        self.person_cache[track_id] = cache_entry
+                                    except Exception as e:
+                                        print(f"Classifier error: {e}")
+
+                        # Use cached info if available, even if we didn't update valid this frame
+                        p_info = self.person_cache.get(track_id, {})
+                        
+                        # Pack additional info
+                        add_info = []
+                        if "gender" in p_info: add_info.append({"gender": p_info["gender"]})
+                        if "age" in p_info: add_info.append({"age": p_info["age"]})
+                        if "emotion" in p_info: add_info.append({"emotion": p_info["emotion"]})
+
+                        
+                        # --- LIDAR INFO ---
+                        lidar_info = {}
+                        if i in lidar_matches:
+                            lm = lidar_matches[i]
+                            l_id = lm.get("id", "?")
+                            l_dist = lm.get("last_position", [0, 0])[1] # y is forward
+                            lidar_info = {"lidar_id": l_id, "distance": l_dist}
+                            
+                            # Draw on frame
+                            txt_lidar = f"LIDAR ID: {l_id} Dist: {l_dist:.2f}m"
+                            cv2.putText(frame_bgr, txt_lidar, (int(x), int(y) - 20), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
 
                         detections["objects"].append({
                             "id": track_id,
@@ -224,7 +394,8 @@ class CVAgent:
                             "height": h.item(),
                             "isPerson": True if label == 0 else False,
                             "angle": angle,
-                            "additionalInfo": []
+                            "additionalInfo": add_info,
+                            "lidar": lidar_info
                         })
                         detections["countOfObjects"] += 1
                         detections["countOfPeople"] += (1 if label == 0 else 0)
@@ -273,4 +444,4 @@ class CVAgent:
 
 if __name__ == "__main__":
     agent = CVAgent()
-    agent.run(save_video=True, show_window=True)
+    agent.run(save_video=True, show_window=True, consolidate_with_lidar=True)

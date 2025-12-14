@@ -5,7 +5,7 @@ def calc_obj_angle(
     p1: Tuple[float, float],
     p2: Tuple[float, float],
     image_width: int,
-    fov_deg: float = 60.0,
+    fov_deg: float = 102.0,
 ) -> float:
     """
     Szacuje poziomy kąt (w stopniach) między frontem kamery (oś optyczna)
