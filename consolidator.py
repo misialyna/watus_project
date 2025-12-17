@@ -12,6 +12,7 @@ def compute_lidar_angle(lidar_track):
     angle_deg = math.degrees(math.atan2(x_offset, y_forward))
     return angle_deg
 
+
 # Pętla główna konsolidatora (np. wykonywana w interwałach ułamka sekundy)
 while True:
     # 1. Odczytaj bieżące dane z plików JSON
