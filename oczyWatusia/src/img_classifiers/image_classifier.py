@@ -5,8 +5,8 @@ import torch
 from transformers import AutoImageProcessor, SiglipForImageClassification, ViTImageProcessor, \
     ViTForImageClassification
 
-from oczyWatusia.src.img_classifiers import  findDominantColor
-from oczyWatusia.src.img_classifiers.utils import retrieve_img
+from src.img_classifiers import  findDominantColor
+from src.img_classifiers.utils import retrieve_img
 
 
 class ImageClassifier:
@@ -68,6 +68,56 @@ class AgeClassifier(ImageClassifier):
             "3": "Middle Age 45-64",
             "4": "Aged 65+"
         }
+
+class ClothesClassifier(ImageClassifier):
+    def __init__(self):
+        super().__init__("samokosik/finetuned-clothes")
+        self.id2label = {
+            "0": "Hat",
+            "1": "Longsleeve",
+            "2": "Outwear",
+            "3": "Pants",
+            "4": "Shoes",
+            "5": "Shorts",
+            "6": "Shortsleeve"
+        }
+
+    def load_models(self):
+        self.processor = ViTImageProcessor.from_pretrained(self.id, use_fast=True)
+        self.model = ViTForImageClassification.from_pretrained(self.id)
+
+class ClothesPatternClassifier(ImageClassifier):
+    def __init__(self):
+        super().__init__("IrshadG/Clothes_Pattern_Classification_v2")
+        self.id2label = {
+            "0": "Argyle",
+            "1": "Check",
+            "2": "Colour blocking",
+            "3": "Denim",
+            "4": "Dot",
+            "5": "Embroidery",
+            "6": "Lace",
+            "7": "Metallic",
+            "8": "Patterns",
+            "9": "Placement print",
+            "10": "Sequin",
+            "11": "Solid",
+            "12": "Stripe",
+            "13": "Transparent",
+        }
+
+    def load_models(self):
+        self.processor = ViTImageProcessor.from_pretrained(self.id, use_fast=True)
+        self.model = ViTForImageClassification.from_pretrained(self.id)
+
+
+def getClothesClassifiers():
+    clothes_classifier = ClothesClassifier()
+    clothes_pattern_classifier = ClothesPatternClassifier()
+    color_classifier = findDominantColor
+    clothes_classifier.load_models()
+    clothes_pattern_classifier.load_models()
+    return clothes_classifier, clothes_pattern_classifier, color_classifier
 
 def getClassifiers():
     emotion_classifier = EmotionClassifier()

@@ -29,7 +29,7 @@
 **/.installed.cfg
 **/*.egg
 **/MANIFEST
-
+**/*.pth
 # PyInstaller
 **/*.manifest
 **/*.spec
