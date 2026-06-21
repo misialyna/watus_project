@@ -1,5 +1,8 @@
 # WATUS – Voice Frontend (Watus + Reporter)
-
+> **This repository is an archived snapshot.**
+> It represents an earlier iteration of WATUS and is preserved for reference.
+> The current version is under active development and will be made public on release.
+> 
 Low-latency voice frontend z rozpoznawaniem lidera (ECAPA / SpeechBrain), transkrypcją (Whisper via Faster-Whisper),
 kolejką ZMQ oraz TTS (Piper). Łączy się z lokalnym backendem LLM (watus-ai) przez HTTP. **Kamera i jej pliki są obowiązkowe** – projekt korzysta z detekcji (Ultralytics RT-DETR/YOLO) i zapisuje kontekst do `camera.jsonl`.
 
